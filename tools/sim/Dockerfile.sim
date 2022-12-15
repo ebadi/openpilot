@@ -12,6 +12,7 @@ RUN cd $HOME && \
 ENV PYTHONPATH $HOME/openpilot:${PYTHONPATH}
 RUN mkdir -p $HOME/openpilot
 
+
 COPY SConstruct $HOME/openpilot/
 
 COPY ./third_party $HOME/openpilot/third_party
@@ -31,3 +32,55 @@ WORKDIR $HOME/openpilot
 RUN scons --cache-readonly -j12
 
 RUN python -c "from selfdrive.test.helpers import set_params_enabled; set_params_enabled()"
+
+
+
+
+ARG ROS_PKG=ros_base
+ENV ROS_DISTRO=noetic
+ENV ROS_ROOT=/opt/ros/${ROS_DISTRO}
+ENV ROS_PYTHON_VERSION=3
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /workspace
+
+# add the ROS deb repo to the apt sources list
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+          git \
+		cmake \
+		build-essential \
+		curl \
+		wget \
+		gnupg2 \
+		lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+    
+
+RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
+RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
+RUN apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+
+RUN apt-get update
+RUN apt-get install -y  ros-${ROS_DISTRO}-desktop-full
+RUN apt-get install -y  ros-noetic-ros-comm
+
+
+# install bootstrap dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+          libpython3-dev \
+          python3-rosdep \
+          python3-rosinstall-generator \
+          python3-vcstool \
+          build-essential && \
+    rosdep init && \
+    rosdep update
+
+
+RUN apt-get install -y --no-install-recommends  iputils-ping  net-tools
+RUN pip install pyros rospkg
+RUN pip uninstall -y opencv-python-headless
+RUN pip install opencv-python-headless 
+RUN echo "\nsource ${ROS_ROOT}/setup.bash\n" >> /root/.bashrc
+WORKDIR /

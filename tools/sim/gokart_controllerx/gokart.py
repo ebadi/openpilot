@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+
+import time
+import rospy
+from gokart_controller import Gokart_Controller
+import os
+
+
 import argparse
 import math
 import os
@@ -13,6 +20,8 @@ import numpy as np
 import pyopencl as cl
 import pyopencl.array as cl_array
 
+import cv2
+
 import cereal.messaging as messaging
 from cereal import log
 from cereal.visionipc import VisionIpcServer, VisionStreamType
@@ -24,36 +33,37 @@ from selfdrive.car.honda.values import CruiseButtons
 from selfdrive.test.helpers import set_params_enabled
 from tools.sim.lib.can import can_function
 
+from queue import Queue
+from threading import Thread
 
 
-import csv  
 
-header = ['is_openpilot_engaged', 
-        'sm_accl', 'sm_steer',
-        'throttle_op', 'throttle_manual', 'old_throttle', 'throttle_out', 'throttle_ease_out_counter',
-        'steer_op', 'steer_manual', 'old_steer', 'steer_out', 'steer_ease_out_counter',
-        'brake_op', 'brake_manual', 'old_brake', 'brake_out', 'brake_ease_out_counter']
-csvfile= open('log.csv', 'w')
-writer = csv.writer(csvfile)
-writer.writerow(header)
+def convert(value, in_min, in_max, out_min, out_max):
+    if value < in_min :
+      value = in_min
+    if value > in_max:
+      value = in_max
+    
+    in_range = in_max - in_min
+    out_range = out_max - out_min
+    scale = float(value - in_min) / float(in_range)
+    return out_min + (scale * out_range)
+
 
 W, H = 1928, 1208
 REPEAT_COUNTER = 5
 PRINT_DECIMATION = 100
 STEER_RATIO = 15.
 
-pm = messaging.PubMaster(['roadCameraState', 'wideRoadCameraState', 'accelerometer', 'gyroscope', 'can', "gpsLocationExternal"])
+pm = messaging.PubMaster(['roadCameraState', 'wideRoadCameraState', 'sensorEvents', 'can', "gpsLocationExternal"])
 sm = messaging.SubMaster(['carControl', 'controlsState'])
 
 def parse_args(add_args=None):
   parser = argparse.ArgumentParser(description='Bridge between CARLA and openpilot.')
   parser.add_argument('--joystick', action='store_true')
   parser.add_argument('--high_quality', action='store_true')
-  parser.add_argument('--dual_camera', action='store_true')
   parser.add_argument('--town', type=str, default='Town04_Opt')
   parser.add_argument('--spawn_point', dest='num_selected_spawn_point', type=int, default=16)
-  parser.add_argument('--host', dest='host', type=str, default='127.0.0.1')
-  parser.add_argument('--port', dest='port', type=int, default=2000)
 
   return parser.parse_args(add_args)
 
@@ -63,7 +73,7 @@ class VehicleState:
     self.speed = 0.0
     self.angle = 0.0
     self.bearing_deg = 0.0
-    self.vel = carla.Vector3D()
+    self.vel =  1 # carla.Vector3D()
     self.cruise_button = 0
     self.is_engaged = False
     self.ignition = True
@@ -95,13 +105,14 @@ class Camerad:
     self.queue = cl.CommandQueue(self.ctx)
     cl_arg = f" -DHEIGHT={H} -DWIDTH={W} -DRGB_STRIDE={W * 3} -DUV_WIDTH={W // 2} -DUV_HEIGHT={H // 2} -DRGB_SIZE={W * H} -DCL_DEBUG "
 
-    kernel_fn = os.path.join(BASEDIR, "tools/sim/rgb_to_nv12.cl")
+    # TODO: move rgb_to_yuv.cl to local dir once the frame stream camera is removed
+    kernel_fn = os.path.join(BASEDIR, "tools", "sim", "rgb_to_nv12.cl")
     with open(kernel_fn) as f:
       prg = cl.Program(self.ctx, f.read()).build(cl_arg)
       self.krnl = prg.rgb_to_nv12
     self.Wdiv4 = W // 4 if (W % 4 == 0) else (W + (4 - W % 4)) // 4
     self.Hdiv4 = H // 4 if (H % 4 == 0) else (H + (4 - H % 4)) // 4
-
+  """
   def cam_callback_road(self, image):
     self._cam_callback(image, self.frame_road_id, 'roadCameraState', VisionStreamType.VISION_STREAM_ROAD)
     self.frame_road_id += 1
@@ -109,11 +120,15 @@ class Camerad:
   def cam_callback_wide_road(self, image):
     self._cam_callback(image, self.frame_wide_id, 'wideRoadCameraState', VisionStreamType.VISION_STREAM_WIDE_ROAD)
     self.frame_wide_id += 1
-
+  """
   def _cam_callback(self, image, frame_id, pub_type, yuv_type):
-    img = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+    # print(type(image)) #  <class 'carla.libcarla.Image'>
+    # print(type(image.raw_data)) # <class 'memoryview'>
+    img = np.frombuffer(image, dtype=np.dtype("uint8"))
     img = np.reshape(img, (H, W, 4))
     img = img[:, :, [0, 1, 2]].copy()
+    # print(type(img), img.shape, img.dtype) # <class 'numpy.ndarray'> (1208, 1928, 3) uint8
+
 
     # convert RGB frame to YUV
     rgb = np.reshape(img, (H, W * 3))
@@ -135,27 +150,19 @@ class Camerad:
     setattr(dat, pub_type, msg)
     pm.send(pub_type, dat)
 
-def imu_callback(imu, vehicle_state):
-  # send 5x since 'sensor_tick' doesn't seem to work. limited by the world tick?
-  for _ in range(5):
-    vehicle_state.bearing_deg = math.degrees(imu.compass)
-    dat = messaging.new_message('accelerometer')
-    dat.accelerometer.sensor = 4
-    dat.accelerometer.type = 0x1
-    dat.accelerometer.timestamp = dat.logMonoTime  # TODO: use the IMU timestamp
-    dat.accelerometer.init('acceleration')
-    dat.accelerometer.acceleration.v = [imu.accelerometer.x, imu.accelerometer.y, imu.accelerometer.z]
-    pm.send('accelerometer', dat)
-
-    # copied these numbers from locationd
-    dat = messaging.new_message('gyroscope')
-    dat.gyroscope.sensor = 5
-    dat.gyroscope.type = 0x10
-    dat.gyroscope.timestamp = dat.logMonoTime  # TODO: use the IMU timestamp
-    dat.gyroscope.init('gyroUncalibrated')
-    dat.gyroscope.gyroUncalibrated.v = [imu.gyroscope.x, imu.gyroscope.y, imu.gyroscope.z]
-    pm.send('gyroscope', dat)
-    time.sleep(0.01)
+def imu_callback():
+  # vehicle_state.bearing_deg = math.degrees(0)
+  dat = messaging.new_message('sensorEvents', 2)
+  dat.sensorEvents[0].sensor = 4
+  dat.sensorEvents[0].type = 0x10
+  dat.sensorEvents[0].init('acceleration')
+  dat.sensorEvents[0].acceleration.v = [0, 0,0]
+  # copied these numbers from locationd
+  dat.sensorEvents[1].sensor = 5
+  dat.sensorEvents[1].type = 0x10
+  dat.sensorEvents[1].init('gyroUncalibrated')
+  dat.sensorEvents[1].gyroUncalibrated.v = [0, 0,0]
+  pm.send('sensorEvents', dat) # WONT START, NEEDED
 
 
 def panda_state_function(vs: VehicleState, exit_event: threading.Event):
@@ -169,7 +176,7 @@ def panda_state_function(vs: VehicleState, exit_event: threading.Event):
       'controlsAllowed': True,
       'safetyModel': 'hondaNidec'
     }
-    pm.send('pandaStates', dat)
+    pm.send('pandaStates', dat) # WONT START,  NEEDED
     time.sleep(0.5)
 
 
@@ -189,30 +196,30 @@ def peripheral_state_function(exit_event: threading.Event):
     time.sleep(0.5)
 
 
-def gps_callback(gps, vehicle_state):
+def gps_callback():
   dat = messaging.new_message('gpsLocationExternal')
 
   # transform vel from carla to NED
   # north is -Y in CARLA
   velNED = [
-    -vehicle_state.vel.y,  # north/south component of NED is negative when moving south
-    vehicle_state.vel.x,  # positive when moving east, which is x in carla
-    vehicle_state.vel.z,
+    0,  # north/south component of NED is negative when moving south
+    0,  # positive when moving east, which is x in carla
+    0,
   ]
 
   dat.gpsLocationExternal = {
-    "unixTimestampMillis": int(time.time() * 1000),
+    "timestamp": int(time.time() * 1000),
     "flags": 1,  # valid fix
     "accuracy": 1.0,
     "verticalAccuracy": 1.0,
     "speedAccuracy": 0.1,
     "bearingAccuracyDeg": 0.1,
     "vNED": velNED,
-    "bearingDeg": vehicle_state.bearing_deg,
-    "latitude": gps.latitude,
-    "longitude": gps.longitude,
-    "altitude": gps.altitude,
-    "speed": vehicle_state.speed,
+    "bearingDeg": 0,
+    "latitude":0,
+    "longitude": 0,
+    "altitude":0,
+    "speed": 0,
     "source": log.GpsLocationData.SensorSource.ublox,
   }
 
@@ -247,8 +254,33 @@ def can_function_runner(vs: VehicleState, exit_event: threading.Event):
     i += 1
 
 
-def connect_carla_client(host: str, port: int):
-  client = carla.Client(host, port)
+
+# 0 -> laptop webcam
+# 2 -> laptop laser
+# test
+def webcam(camerad: Camerad, exit_event: threading.Event):
+  rk = Ratekeeper(20)
+  # Load the video
+  myframeid = 0
+  cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
+  while not exit_event.is_set():
+    print("image recieved")
+    ret, frame = cap.read()
+    if not ret:
+      end_of_video = True
+      break
+    frame = cv2.resize(frame, (W, H))
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
+    #cv2.imwrite('webcam.jpg', frame)
+    camerad._cam_callback(frame, frame_id=myframeid, pub_type='roadCameraState', yuv_type=VisionStreamType.VISION_STREAM_ROAD)
+    camerad._cam_callback(frame, frame_id=myframeid, pub_type='wideRoadCameraState', yuv_type=VisionStreamType.VISION_STREAM_WIDE_ROAD)
+    myframeid = myframeid +1 
+    rk.keep_time()
+
+
+
+def connect_carla_client():
+  client = carla.Client("127.0.0.1", 2000)
   client.set_timeout(5)
   return client
 
@@ -256,15 +288,11 @@ def connect_carla_client(host: str, port: int):
 class CarlaBridge:
 
   def __init__(self, arguments):
-    set_params_enabled()
-
-    self.params = Params()
-
+    set_params_enabled()  
     msg = messaging.new_message('liveCalibration')
     msg.liveCalibration.validBlocks = 20
     msg.liveCalibration.rpyCalib = [0.0, 0.0, 0.0]
-    self.params.put("CalibrationParams", msg.to_bytes())
-    self.params.put_bool("WideCameraOnly", not arguments.dual_camera)
+    Params().put("CalibrationParams", msg.to_bytes())
 
     self._args = arguments
     self._carla_objects = []
@@ -305,7 +333,41 @@ class CarlaBridge:
       self.close()
 
   def _run(self, q: Queue):
-    client = connect_carla_client(self._args.host, self._args.port)
+    ###################################3
+    import string
+    import random
+
+    """ 
+    def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
+        return ''.join(random.choice(chars) for _ in range(size))
+    id = id_generator()
+    print("ROS random id", id)
+    rospy.init_node('Gokart_Controller' + id, log_level=rospy.INFO )
+    rospy.core.set_node_uri("http://dobby.local:11311")
+    print("here", id)
+    gc = Gokart_Controller()
+    rate = rospy.Rate(10)
+    for i in range(0,10):
+      print(i)
+      gc.set_turn_rate(i)
+      rate.sleep()
+    time.sleep(1)
+    for i in range(10,0, -1):
+      print(i)
+      gc.set_turn_rate(i)
+      rate.sleep()
+    time.sleep(1)
+
+    print("DONE")
+    ###################################
+    """
+    max_steer_angle = 10
+
+
+
+
+    """
+    client = connect_carla_client()
     world = client.load_world(self._args.town)
 
     settings = world.get_settings()
@@ -328,7 +390,6 @@ class CarlaBridge:
     world_map = world.get_map()
 
     vehicle_bp = blueprint_library.filter('vehicle.tesla.*')[1]
-    vehicle_bp.set_attribute('role_name', 'hero')
     spawn_points = world_map.get_spawn_points()
     assert len(spawn_points) > self._args.num_selected_spawn_point, f'''No spawn point {self._args.num_selected_spawn_point}, try a value between 0 and
       {len(spawn_points)} for this town.'''
@@ -358,35 +419,36 @@ class CarlaBridge:
       camera = world.spawn_actor(blueprint, transform, attach_to=vehicle)
       camera.listen(callback)
       return camera
+    """
 
     self._camerad = Camerad()
-
-    if self._args.dual_camera:
-      road_camera = create_camera(fov=40, callback=self._camerad.cam_callback_road)
-      self._carla_objects.append(road_camera)
-
+    """
+    road_camera = create_camera(fov=40, callback=self._camerad.cam_callback_road)
     road_wide_camera = create_camera(fov=120, callback=self._camerad.cam_callback_wide_road)  # fov bigger than 120 shows unwanted artifacts
-    self._carla_objects.append(road_wide_camera)
 
+    self._carla_objects.extend([road_camera, road_wide_camera])
+    """
     vehicle_state = VehicleState()
-
-    # re-enable IMU
+    """
+    # reenable IMU
     imu_bp = blueprint_library.find('sensor.other.imu')
-    imu_bp.set_attribute('sensor_tick', '0.01')
     imu = world.spawn_actor(imu_bp, transform, attach_to=vehicle)
     imu.listen(lambda imu: imu_callback(imu, vehicle_state))
 
     gps_bp = blueprint_library.find('sensor.other.gnss')
     gps = world.spawn_actor(gps_bp, transform, attach_to=vehicle)
     gps.listen(lambda gps: gps_callback(gps, vehicle_state))
-    self.params.put_bool("UbloxAvailable", True)
 
     self._carla_objects.extend([imu, gps])
+    """
     # launch fake car threads
     self._threads.append(threading.Thread(target=panda_state_function, args=(vehicle_state, self._exit_event,)))
     self._threads.append(threading.Thread(target=peripheral_state_function, args=(self._exit_event,)))
     self._threads.append(threading.Thread(target=fake_driver_monitoring, args=(self._exit_event,)))
     self._threads.append(threading.Thread(target=can_function_runner, args=(vehicle_state, self._exit_event,)))
+    self._threads.append(threading.Thread(target=webcam, args=(self._camerad, self._exit_event,)))
+    ############################## Hamid threat
+
     for t in self._threads:
       t.start()
 
@@ -395,11 +457,9 @@ class CarlaBridge:
     brake_ease_out_counter = REPEAT_COUNTER
     steer_ease_out_counter = REPEAT_COUNTER
 
-    sm_steer = 0 
-    sm_accl = 0
     vc = carla.VehicleControl(throttle=0, steer=0, brake=0, reverse=False)
 
-    is_openpilot_engaged = False
+    is_openpilot_engaged = True
     throttle_out = steer_out = brake_out = 0.
     throttle_op = steer_op = brake_op = 0.
     throttle_manual = steer_manual = brake_manual = 0.
@@ -410,8 +470,8 @@ class CarlaBridge:
     steer_manual_multiplier = 45 * STEER_RATIO  # keyboard signal is always 1
 
     # Simulation tends to be slow in the initial steps. This prevents lagging later
-    for _ in range(20):
-      world.tick()
+    # for _ in range(20):
+    #  world.tick()
 
     # loop
     rk = Ratekeeper(100, print_delay_threshold=0.05)
@@ -425,7 +485,6 @@ class CarlaBridge:
       throttle_out = steer_out = brake_out = 0.0
       throttle_op = steer_op = brake_op = 0.0
       throttle_manual = steer_manual = brake_manual = 0.0
-  
       # --------------Step 1-------------------------------
       if not q.empty():
         message = q.get()
@@ -467,10 +526,18 @@ class CarlaBridge:
 
       if is_openpilot_engaged:
         sm.update(0)
+        if sm['carControl'].actuators.accel != 0 or sm['carControl'].actuators.steeringAngleDeg != 0 :
+
+          converted_angle = convert( sm['carControl'].actuators.steeringAngleDeg, -25, 25, 2, 8)
+          print("car accel:", sm['carControl'].actuators.accel , " car steeringAngleDeg", sm['carControl'].actuators.steeringAngleDeg, "car converted angle", converted_angle)
+          
+          # gc.set_turn_rate(converted_angle)
+
+          
+          #print("TYPE", type(converted_angle))
 
         # TODO gas and brake is deprecated
-        sm_accl = sm['carControl'].actuators.accel
-        sm_steer = sm['carControl'].actuators.steeringAngleDeg
+        # TODO: WHY IS THIS NEEDED ??????????????????
         throttle_op = clip(sm['carControl'].actuators.accel / 1.6, 0.0, 1.0)
         brake_op = clip(-sm['carControl'].actuators.accel / 4.0, 0.0, 1.0)
         steer_op = sm['carControl'].actuators.steeringAngleDeg
@@ -478,7 +545,7 @@ class CarlaBridge:
         throttle_out = throttle_op
         steer_out = steer_op
         brake_out = brake_op
-
+        # TODO : CHECK RATE LIMIT VALUE ??????????????
         steer_out = steer_rate_limit(old_steer, steer_out)
         old_steer = steer_out
 
@@ -517,29 +584,26 @@ class CarlaBridge:
       vc.throttle = throttle_out / 0.6
       vc.steer = steer_carla
       vc.brake = brake_out
+      """
       vehicle.apply_control(vc)
 
       # --------------Step 3-------------------------------
       vel = vehicle.get_velocity()
       speed = math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)  # in m/s
-      vehicle_state.speed = speed
-      vehicle_state.vel = vel
+      """
+      vehicle_state.speed = 2
+      vehicle_state.vel = 2
       vehicle_state.angle = steer_out
       vehicle_state.cruise_button = cruise_button
       vehicle_state.is_engaged = is_openpilot_engaged
 
-      writer.writerow([is_openpilot_engaged, 
-        sm_accl, sm_steer,
-        throttle_op, throttle_manual, old_throttle, throttle_out, throttle_ease_out_counter,
-        steer_op, steer_manual, old_steer, steer_out, steer_ease_out_counter,
-        brake_op, brake_manual, old_brake, brake_out, brake_ease_out_counter,
-       ])
       if rk.frame % PRINT_DECIMATION == 0:
-        print("frame: ", "engaged:", is_openpilot_engaged, "; throttle: ", round(vc.throttle, 3), "; steer(c/deg): ",
-              round(vc.steer, 3), round(steer_out, 3), "; brake: ", round(vc.brake, 3))
+        print("throttle: {:.2f} steer(c/deg): {:.2f}   steer out: {:.2f} ".format(vc.throttle,vc.steer, steer_out) )
 
+      """
       if rk.frame % 5 == 0:
         world.tick()
+      """
       rk.keep_time()
       self.started = True
 
@@ -584,4 +648,4 @@ if __name__ == "__main__":
   finally:
     # Try cleaning up the wide camera param
     # in case users want to use replay after
-    Params().remove("WideCameraOnly")
+    Params().delete("WideCameraOnly")

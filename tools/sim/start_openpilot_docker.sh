@@ -15,7 +15,7 @@ else
   # expose X to the container
   xhost +local:root
 
-  docker pull ghcr.io/commaai/openpilot-sim:latest
+  # docker pull ghcr.io/commaai/openpilot-sim:latest
   CMD="./tmux_script.sh $*"
   EXTRA_ARGS="${EXTRA_ARGS} -it"
 fi
@@ -28,10 +28,12 @@ docker run --net=host\
   --device=/dev/dri:/dev/dri \
   --device=/dev/input:/dev/input \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v "$DIR/":/openpilot/tools/sim/ \
+  --device /dev/video0  --device /dev/video1  \
   --shm-size 1G \
   -e DISPLAY=$DISPLAY \
   -e QT_X11_NO_MITSHM=1 \
   -w "$OPENPILOT_DIR/tools/sim" \
   $EXTRA_ARGS \
-  ghcr.io/commaai/openpilot-sim:latest \
+  master-webcam-openpilot-sim:latest \
   /bin/bash -c "$CMD"
