@@ -32,7 +32,8 @@ header = ['is_openpilot_engaged',
         'sm_accl', 'sm_steer',
         'throttle_op', 'throttle_manual', 'old_throttle', 'throttle_out', 'throttle_ease_out_counter',
         'steer_op', 'steer_manual', 'old_steer', 'steer_out', 'steer_ease_out_counter',
-        'brake_op', 'brake_manual', 'old_brake', 'brake_out', 'brake_ease_out_counter']
+        'brake_op', 'brake_manual', 'old_brake', 'brake_out', 'brake_ease_out_counter',
+        'vc.throttle', 'vc.steer', 'vc.brake']
 csvfile= open('log.csv', 'w')
 writer = csv.writer(csvfile)
 writer.writerow(header)
@@ -533,6 +534,7 @@ class CarlaBridge:
         throttle_op, throttle_manual, old_throttle, throttle_out, throttle_ease_out_counter,
         steer_op, steer_manual, old_steer, steer_out, steer_ease_out_counter,
         brake_op, brake_manual, old_brake, brake_out, brake_ease_out_counter,
+        vc.throttle, vc.steer, vc.brake
        ])
       if rk.frame % PRINT_DECIMATION == 0:
         print("frame: ", "engaged:", is_openpilot_engaged, "; throttle: ", round(vc.throttle, 3), "; steer(c/deg): ",

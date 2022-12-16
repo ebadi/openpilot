@@ -10,7 +10,7 @@ tmux send-keys "./launch_openpilot.sh" ENTER
 
 
 tmux neww
-tmux send-keys "./bridge.py --dual_camera $*" ENTER
+tmux send-keys "./hamidbridge.py --dual_camera $*" ENTER
 
 tmux neww
 tmux send-keys "./../replay/ui.py $*" ENTER

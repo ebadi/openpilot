@@ -56,6 +56,29 @@ class VehicleState:
     self.is_engaged = False
     self.ignition = True
 
+def clamp(num, min_value, max_value):
+	return max(min(num, max_value), min_value)
+   
+# Test    
+# normalize(0.4344433, (0,1), (0.25,0.5) )
+# 0.35861082499999997
+# normalize(0, (0,1), (-1,0) )
+# -1.0
+def normalize(values, actual_bounds, desired_bounds):
+    return desired_bounds[0] + (clamp(values, actual_bounds[0] , actual_bounds[1]) - actual_bounds[0]) * (desired_bounds[1] - desired_bounds[0]) / (actual_bounds[1] - actual_bounds[0]) 
+    
+
+
+def TBS_rescale(tbs, scalingtype):
+  if scalingtype == "openpilot2carla":
+    tbs.throttle = normalize(tbs.throttle, (0,1), (0,1) )
+    tbs.brake = 0 # normalize(tbs.brake, (0,1), (-1,0) )
+    tbs.steer = normalize(tbs.steer, (0,1), (-1,1) )    
+  else: 
+    tbs.throttle = normalize(tbs.throttle, (0,1), (0,1) )
+    tbs.brake = 0 # normalize(tbs.brake, (0,1), (-1,0) )
+    tbs.steer = normalize(tbs.steer, (0,1), (-1,1) )    
+  return tbs # no scaling
 
 def TBS_rate_limit(old, new):
   Tlimit = 1
@@ -76,7 +99,6 @@ def TBS_rate_limit(old, new):
   else:
     brake = new.brake
 
-
   if new.steer > old.steer + Slimit:
     steer = old.steer + Slimit
   elif new.steer  < old.steer  - Slimit:
@@ -86,22 +108,15 @@ def TBS_rate_limit(old, new):
 
   return TrottleBrakeSteer(throttle, brake, steer)
 
-
-def steer_rate_limit(old, new):
-  # Rate limiting to 0.5 degrees per step
-  limit = 0.5
-  if new > old + limit:
-    return old + limit
-  elif new < old - limit:
-    return old - limit
-  else:
-    return new
-
 class TrottleBrakeSteer:
     def __init__(self, throttle=0, brake=0, steer=0):
       self.throttle = throttle
       self.brake = brake
       self.steer = steer
+    def __repr__(self):
+      return "[T:%.2f B:%.2f S:%.2f]" % (self.throttle, self.brake, self.steer)
+    def __eq__(self, other):
+        return (self.throttle, self.brake, self.steer) == (other.throttle, other.brake, other.steer)
 
 class Camerad:
   def __init__(self):
@@ -418,9 +433,12 @@ class CarlaBridge:
 
     is_openpilot_engaged = False
 
-    out= TrottleBrakeSteer()
+    # input
     op= TrottleBrakeSteer()
     manual= TrottleBrakeSteer()
+    # result
+    out= TrottleBrakeSteer()
+    # holsingh previous state
     old = TrottleBrakeSteer()
 
     # Simulation tends to be slow in the initial steps. This prevents lagging later
@@ -477,10 +495,18 @@ class CarlaBridge:
 
         # TODO gas and brake is deprecated
         op.throttle = sm['carControl'].actuators.accel
-        op.brakew = sm['carControl'].actuators.accel
+        op.brake = sm['carControl'].actuators.accel
         op.steer = sm['carControl'].actuators.steeringAngleDeg
 
+        new = TBS_rescale(op, "openpilot2carla")
+      else:
+        new = TBS_rescale(manual, "manual2carla")
 
+      out = TBS_rate_limit(new, old)
+
+      print("1>>", old, op, new, out)
+
+      old = out
 
       # --------------Step 2-------------------------------
       
@@ -494,15 +520,12 @@ class CarlaBridge:
       # --------------Step 3-------------------------------
       vel = vehicle.get_velocity()
       speed = math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)  # in m/s
-      vehicle_state.speed = speed
+      vehicle_state.speed = 2
       vehicle_state.vel = vel
       vehicle_state.angle = out.steer
       vehicle_state.cruise_button = cruise_button
       vehicle_state.is_engaged = is_openpilot_engaged
 
-      if rk.frame % PRINT_DECIMATION == 0:
-        print("frame: ", "engaged:", is_openpilot_engaged, "; throttle: ", round(out.throttle, 3), "; steer: ",
-              round(out.steer, 3), "; brake: ", round(out.brake, 3))
 
       if rk.frame % 5 == 0:
         world.tick()
