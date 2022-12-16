@@ -71,7 +71,7 @@ def normalize(values, actual_bounds, desired_bounds):
 
 def TBS_rescale(tbs, scalingtype):
   if scalingtype == "openpilot2carla":
-    tbs.throttle = normalize(tbs.throttle, (0,1), (0,1) )
+    tbs.throttle = normalize(tbs.throttle, (0,1), (0,0.9) )
     tbs.brake = 0 # normalize(tbs.brake, (0,1), (-1,0) )
     tbs.steer = normalize(tbs.steer, (0,1), (-1,1) )    
   else: 
@@ -81,9 +81,9 @@ def TBS_rescale(tbs, scalingtype):
   return tbs # no scaling
 
 def TBS_rate_limit(old, new):
-  Tlimit = 1
-  Blimit = 1
-  Slimit = 1
+  Tlimit = 10
+  Blimit = 10
+  Slimit = 10
   
   if new.throttle > old.throttle + Tlimit:
     throttle = old.throttle + Tlimit
@@ -105,8 +105,7 @@ def TBS_rate_limit(old, new):
     steer = old.steer - Slimit
   else:
     steer = new.steer
-
-  return TrottleBrakeSteer(throttle, brake, steer)
+  return TrottleBrakeSteer(throttle=throttle, brake=brake, steer=steer)
 
 class TrottleBrakeSteer:
     def __init__(self, throttle=0, brake=0, steer=0):
@@ -502,9 +501,9 @@ class CarlaBridge:
       else:
         new = TBS_rescale(manual, "manual2carla")
 
-      out = TBS_rate_limit(new, old)
+      out = TBS_rate_limit(old, new)
 
-      print("1>>", old, op, new, out)
+      print(">>old:" , old, "op:", op, "new:", new, "out", out)
 
       old = out
 
