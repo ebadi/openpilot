@@ -56,6 +56,21 @@ class VehicleState:
     self.is_engaged = False
     self.ignition = True
 
+
+
+ ###################################################################################
+
+
+class TrottleBrakeSteer:
+    def __init__(self, throttle=0, brake=0, steer=0):
+      self.throttle = throttle
+      self.brake = brake
+      self.steer = steer
+    def __repr__(self):
+      return "[T:%.5f B:%.5f S:%.5f]" % (self.throttle, self.brake, self.steer)
+    def __eq__(self, other):
+        return (self.throttle, self.brake, self.steer) == (other.throttle, other.brake, other.steer)
+
 def clamp(num, min_value, max_value):
 	return max(min(num, max_value), min_value)
    
@@ -64,41 +79,37 @@ def clamp(num, min_value, max_value):
 # 0.35861082499999997
 # normalize(0, (0,1), (-1,0) )
 # -1.0
+
 def normalize(values, actual_bounds, desired_bounds):
     return desired_bounds[0] + (clamp(values, actual_bounds[0] , actual_bounds[1]) - actual_bounds[0]) * (desired_bounds[1] - desired_bounds[0]) / (actual_bounds[1] - actual_bounds[0]) 
-    
-
 
 def TBS_rescale(tbs, scalingtype):
   if scalingtype == "openpilot2carla":
-    tbs.throttle = normalize(tbs.throttle, (0,1), (0,0.9) )
+    tbs.throttle = tbs.throttle # normalize(tbs.throttle, (0,1), (0,0.2) )
     tbs.brake = 0 # normalize(tbs.brake, (0,1), (-1,0) )
-    tbs.steer = normalize(tbs.steer, (0,1), (-1,1) )    
-  else: 
-    tbs.throttle = normalize(tbs.throttle, (0,1), (0,1) )
-    tbs.brake = 0 # normalize(tbs.brake, (0,1), (-1,0) )
-    tbs.steer = normalize(tbs.steer, (0,1), (-1,1) )    
+    tbs.steer = tbs.steer / (-1000)# normalize(tbs.steer, (0,90), (-0.1, 0.1) ) 
+  else:  # manual2carla
+    tbs.throttle = 0 # normalize(tbs.throttle, (0,1), (0,1) )
+    tbs.brake = 0.0 # normalize(tbs.brake, (0,1), (-1,0) )
+    tbs.steer = 0.0 # normalize(tbs.steer, (0,1), (0,1) )    
   return tbs # no scaling
 
 def TBS_rate_limit(old, new):
-  Tlimit = 10
-  Blimit = 10
-  Slimit = 10
-  
+  Tlimit = 0.001
+  Blimit = 0.1
+  Slimit = 0.0002
   if new.throttle > old.throttle + Tlimit:
     throttle = old.throttle + Tlimit
   elif new.throttle  < old.throttle  - Tlimit:
     throttle = old.throttle - Tlimit
   else:
     throttle = new.throttle
-
   if new.brake > old.brake + Blimit:
     brake = old.brake + Blimit
   elif new.brake  < old.brake  - Blimit:
     brake = old.brake - Blimit
   else:
     brake = new.brake
-
   if new.steer > old.steer + Slimit:
     steer = old.steer + Slimit
   elif new.steer  < old.steer  - Slimit:
@@ -107,15 +118,7 @@ def TBS_rate_limit(old, new):
     steer = new.steer
   return TrottleBrakeSteer(throttle=throttle, brake=brake, steer=steer)
 
-class TrottleBrakeSteer:
-    def __init__(self, throttle=0, brake=0, steer=0):
-      self.throttle = throttle
-      self.brake = brake
-      self.steer = steer
-    def __repr__(self):
-      return "[T:%.2f B:%.2f S:%.2f]" % (self.throttle, self.brake, self.steer)
-    def __eq__(self, other):
-        return (self.throttle, self.brake, self.steer) == (other.throttle, other.brake, other.steer)
+###################################################################################
 
 class Camerad:
   def __init__(self):
@@ -454,9 +457,9 @@ class CarlaBridge:
 
       cruise_button = 0
 
-      out.__init__()
+      # out.__init__()
       op.__init__()
-      manual.__init__()
+      # manual.__init__()
   
       # --------------Step 1-------------------------------
       if not q.empty():
@@ -496,7 +499,7 @@ class CarlaBridge:
         op.throttle = sm['carControl'].actuators.accel
         op.brake = sm['carControl'].actuators.accel
         op.steer = sm['carControl'].actuators.steeringAngleDeg
-
+        print(op)
         new = TBS_rescale(op, "openpilot2carla")
       else:
         new = TBS_rescale(manual, "manual2carla")
@@ -514,12 +517,21 @@ class CarlaBridge:
       vc.brake = out.brake
       vc.steer = out.steer
 
+      """
+      https://carla.readthedocs.io/en/latest/python_api/#carla.VehicleControl
+      throttle (float)
+      A scalar value to control the vehicle throttle [0.0, 1.0]. Default is 0.0.
+      steer (float)
+      A scalar value to control the vehicle steering [-1.0, 1.0]. Default is 0.0.
+      brake (float)
+      A scalar value to control the vehicle brake [0.0, 1.0]. Default is 0.0. 
+      """
       vehicle.apply_control(vc)
 
       # --------------Step 3-------------------------------
       vel = vehicle.get_velocity()
       speed = math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)  # in m/s
-      vehicle_state.speed = 2
+      vehicle_state.speed = speed
       vehicle_state.vel = vel
       vehicle_state.angle = out.steer
       vehicle_state.cruise_button = cruise_button
