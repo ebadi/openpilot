@@ -60,6 +60,16 @@ class VehicleState:
 
  ###################################################################################
 
+"""
+https://carla.readthedocs.io/en/latest/python_api/#carlavehiclecontrol
+
+throttle (float)
+A scalar value to control the vehicle throttle [0.0, 1.0]. Default is 0.0.
+brake (float)
+A scalar value to control the vehicle brake [0.0, 1.0]. Default is 0.0. 
+steer (float)
+A scalar value to control the vehicle steering [-1.0, 1.0]. Default is 0.0.
+"""
 
 class TrottleBrakeSteer:
     def __init__(self, throttle=0, brake=0, steer=0):
@@ -71,8 +81,11 @@ class TrottleBrakeSteer:
     def __eq__(self, other):
         return (self.throttle, self.brake, self.steer) == (other.throttle, other.brake, other.steer)
 
-def clamp(num, min_value, max_value):
-	return max(min(num, max_value), min_value)
+def clamp(num, bound2, bound1):
+  if bound2 < bound1 :
+	  return max(min(num, bound1), bound2)
+  else:
+    return max(min(num, bound2), bound1)
    
 # Test    
 # normalize(0.4344433, (0,1), (0.25,0.5) )
@@ -85,9 +98,9 @@ def normalize(values, actual_bounds, desired_bounds):
 
 def TBS_rescale(tbs, scalingtype):
   if scalingtype == "openpilot2carla":
-    tbs.throttle = tbs.throttle # normalize(tbs.throttle, (0,1), (0,0.2) )
-    tbs.brake = 0 # normalize(tbs.brake, (0,1), (-1,0) )
-    tbs.steer = tbs.steer / (-1000)# normalize(tbs.steer, (0,90), (-0.1, 0.1) ) 
+    tbs.throttle = tbs.throttle *2 # normalize(tbs.throttle, (0,1), (0,0.2) )
+    tbs.brake = normalize(tbs.brake, (0,1), (-1,0) )
+    tbs.steer = normalize(tbs.steer, (-100, 100), (0.1, -0.1) )  # tbs.steer / (-1000)
   else:  # manual2carla
     tbs.throttle = 0 # normalize(tbs.throttle, (0,1), (0,1) )
     tbs.brake = 0.0 # normalize(tbs.brake, (0,1), (-1,0) )
