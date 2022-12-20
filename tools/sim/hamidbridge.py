@@ -61,6 +61,32 @@ class VehicleState:
  ###################################################################################
 
 """
+
+                  ┌──────────────┐
+                  │  OpenPilot   │
+                  └──────┬───────┘
+(Throttle, Brake, Steer) │
+                         │
+                         │
+  ┌──────┐               │  TBS_rescale()
+  │      │               │
+  │ ┌────▼────┐       ┌──▼──┐
+  │ │old(prev)│       │ new │
+  │ └────┬────┘       └──┬──┘
+  │      │               │
+  │      └──────────────►│  TBS_rate_limit()
+  │                      │
+  │                   ┌──▼──┐
+  └───────────────────┤ out │
+                      └──┬──┘
+                         │  vehicle.apply_control
+                         │
+                  ┌──────▼───────┐
+                  │    CARLA     │
+                  └──────────────┘
+
+new, old and out are objects of type TBS (TrottleBrakeSteer)
+
 https://carla.readthedocs.io/en/latest/python_api/#carlavehiclecontrol
 
 throttle (float)
@@ -69,6 +95,7 @@ brake (float)
 A scalar value to control the vehicle brake [0.0, 1.0]. Default is 0.0. 
 steer (float)
 A scalar value to control the vehicle steering [-1.0, 1.0]. Default is 0.0.
+
 """
 
 class TrottleBrakeSteer:
@@ -99,7 +126,7 @@ def normalize(values, actual_bounds, desired_bounds):
 def TBS_rescale(tbs, scalingtype):
   if scalingtype == "openpilot2carla":
     tbs.throttle = normalize(tbs.throttle, (0,1), (0,1) )
-    tbs.brake = 0 # normalize(tbs.brake, (0,1), (0,25) )
+    tbs.brake = normalize(tbs.brake * -1, (0,1), (0,0.25) ) # brake = -throttle, The only trick is that brake only if thottle was negative, ignore if throttle is possitive
     tbs.steer = normalize(tbs.steer, (-100, 100), (0.1, -0.1) )  # tbs.steer / (-1000) # normalize(tbs.steer, (-100, 100), (0.1, -0.1) )      <- Exceed OP steering limit
   else:  # manual2carla
     tbs.throttle = 0 # normalize(tbs.throttle, (0,1), (0,1) )
@@ -118,7 +145,7 @@ def rate_limit(old, new, limit):
 
 def TBS_rate_limit(old, new):
   Tlimit = 0.001
-  Blimit = 0.1
+  Blimit = 1
   Slimit = 0.0002
   return TrottleBrakeSteer(throttle=rate_limit(old.throttle, new.throttle, Tlimit), brake=rate_limit(old.brake, new.brake, Blimit), steer=rate_limit(old.steer, new.steer, Slimit))
 
@@ -444,7 +471,7 @@ class CarlaBridge:
     manual= TrottleBrakeSteer()
     # result
     out= TrottleBrakeSteer()
-    # holsingh previous state
+    # keeping previous state for change rate limit
     old = TrottleBrakeSteer()
 
     # Simulation tends to be slow in the initial steps. This prevents lagging later
@@ -461,10 +488,6 @@ class CarlaBridge:
 
       cruise_button = 0
 
-      # out.__init__()
-      op.__init__()
-      # manual.__init__()
-  
       # --------------Step 1-------------------------------
       if not q.empty():
         message = q.get()
@@ -521,15 +544,6 @@ class CarlaBridge:
       vc.brake = out.brake
       vc.steer = out.steer
 
-      """
-      https://carla.readthedocs.io/en/latest/python_api/#carla.VehicleControl
-      throttle (float)
-      A scalar value to control the vehicle throttle [0.0, 1.0]. Default is 0.0.
-      steer (float)
-      A scalar value to control the vehicle steering [-1.0, 1.0]. Default is 0.0.
-      brake (float)
-      A scalar value to control the vehicle brake [0.0, 1.0]. Default is 0.0. 
-      """
       vehicle.apply_control(vc)
 
       # --------------Step 3-------------------------------
