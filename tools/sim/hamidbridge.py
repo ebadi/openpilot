@@ -98,38 +98,29 @@ def normalize(values, actual_bounds, desired_bounds):
 
 def TBS_rescale(tbs, scalingtype):
   if scalingtype == "openpilot2carla":
-    tbs.throttle = tbs.throttle *2 # normalize(tbs.throttle, (0,1), (0,0.2) )
-    tbs.brake = normalize(tbs.brake, (0,1), (-1,0) )
-    tbs.steer = normalize(tbs.steer, (-100, 100), (0.1, -0.1) )  # tbs.steer / (-1000)
+    tbs.throttle = normalize(tbs.throttle, (0,1), (0,1) )
+    tbs.brake = 0 # normalize(tbs.brake, (0,1), (0,25) )
+    tbs.steer = normalize(tbs.steer, (-100, 100), (0.1, -0.1) )  # tbs.steer / (-1000) # normalize(tbs.steer, (-100, 100), (0.1, -0.1) )      <- Exceed OP steering limit
   else:  # manual2carla
     tbs.throttle = 0 # normalize(tbs.throttle, (0,1), (0,1) )
     tbs.brake = 0.0 # normalize(tbs.brake, (0,1), (-1,0) )
     tbs.steer = 0.0 # normalize(tbs.steer, (0,1), (0,1) )    
   return tbs # no scaling
 
+def rate_limit(old, new, limit):
+  if new > old + limit:
+    result = old + limit
+  elif new  < old - limit:
+    result = old - limit
+  else:
+    result = new
+  return result
+
 def TBS_rate_limit(old, new):
   Tlimit = 0.001
   Blimit = 0.1
   Slimit = 0.0002
-  if new.throttle > old.throttle + Tlimit:
-    throttle = old.throttle + Tlimit
-  elif new.throttle  < old.throttle  - Tlimit:
-    throttle = old.throttle - Tlimit
-  else:
-    throttle = new.throttle
-  if new.brake > old.brake + Blimit:
-    brake = old.brake + Blimit
-  elif new.brake  < old.brake  - Blimit:
-    brake = old.brake - Blimit
-  else:
-    brake = new.brake
-  if new.steer > old.steer + Slimit:
-    steer = old.steer + Slimit
-  elif new.steer  < old.steer  - Slimit:
-    steer = old.steer - Slimit
-  else:
-    steer = new.steer
-  return TrottleBrakeSteer(throttle=throttle, brake=brake, steer=steer)
+  return TrottleBrakeSteer(throttle=rate_limit(old.throttle, new.throttle, Tlimit), brake=rate_limit(old.brake, new.brake, Blimit), steer=rate_limit(old.steer, new.steer, Slimit))
 
 ###################################################################################
 
