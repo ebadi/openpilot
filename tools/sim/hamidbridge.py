@@ -25,7 +25,6 @@ from selfdrive.test.helpers import set_params_enabled
 from tools.sim.lib.can import can_function
 
 W, H = 1928, 1208
-REPEAT_COUNTER = 5
 PRINT_DECIMATION = 100
 
 pm = messaging.PubMaster(['roadCameraState', 'wideRoadCameraState', 'accelerometer', 'gyroscope', 'can', "gpsLocationExternal"])
@@ -54,7 +53,6 @@ class VehicleState:
     self.is_engaged = False
     self.ignition = True
 
-###################################################################################
 
 """
 https://github.com/commaai/cereal/blob/master/car.capnp#L334
@@ -114,12 +112,6 @@ def clamp(num, bound2, bound1):
   else:
     return max(min(num, bound2), bound1)
 
-# Test
-# normalize(0.4344433, (0,1), (0.25,0.5) )
-# 0.35861082499999997
-# normalize(0, (0,1), (-1,0) )
-# -1.0
-
 
 def normalize(values, actual_bounds, desired_bounds):
     return desired_bounds[0] + (clamp(values, actual_bounds[0], actual_bounds[1]) - actual_bounds[0]) * (desired_bounds[1] - desired_bounds[0]) / (actual_bounds[1] - actual_bounds[0])
@@ -166,7 +158,6 @@ def TBS_rate_limit(old, new, mode):
     Slimit = 1
   return TrottleBrakeSteer(throttle=rate_limit(old.throttle, new.throttle, Tlimit), brake=rate_limit(old.brake, new.brake, Blimit), steer=rate_limit(old.steer, new.steer, Slimit))
 
-###################################################################################
 
 class Camerad:
   def __init__(self):
