@@ -24,6 +24,20 @@ from selfdrive.car.honda.values import CruiseButtons
 from selfdrive.test.helpers import set_params_enabled
 from tools.sim.lib.can import can_function
 
+
+
+import csv  
+
+header = ['is_openpilot_engaged', 
+        'sm_accl', 'sm_steer',
+        'throttle_op', 'throttle_manual', 'old_throttle', 'throttle_out', 'throttle_ease_out_counter',
+        'steer_op', 'steer_manual', 'old_steer', 'steer_out', 'steer_ease_out_counter',
+        'brake_op', 'brake_manual', 'old_brake', 'brake_out', 'brake_ease_out_counter',
+        'vc.throttle', 'vc.steer', 'vc.brake']
+csvfile= open('log.csv', 'w')
+writer = csv.writer(csvfile)
+writer.writerow(header)
+
 W, H = 1928, 1208
 REPEAT_COUNTER = 5
 PRINT_DECIMATION = 100
@@ -128,7 +142,7 @@ def imu_callback(imu, vehicle_state):
     vehicle_state.bearing_deg = math.degrees(imu.compass)
     dat = messaging.new_message('accelerometer')
     dat.accelerometer.sensor = 4
-    dat.accelerometer.type = 0x10
+    dat.accelerometer.type = 0x1
     dat.accelerometer.timestamp = dat.logMonoTime  # TODO: use the IMU timestamp
     dat.accelerometer.init('acceleration')
     dat.accelerometer.acceleration.v = [imu.accelerometer.x, imu.accelerometer.y, imu.accelerometer.z]
@@ -382,6 +396,8 @@ class CarlaBridge:
     brake_ease_out_counter = REPEAT_COUNTER
     steer_ease_out_counter = REPEAT_COUNTER
 
+    sm_steer = 0 
+    sm_accl = 0
     vc = carla.VehicleControl(throttle=0, steer=0, brake=0, reverse=False)
 
     is_openpilot_engaged = False
@@ -410,7 +426,7 @@ class CarlaBridge:
       throttle_out = steer_out = brake_out = 0.0
       throttle_op = steer_op = brake_op = 0.0
       throttle_manual = steer_manual = brake_manual = 0.0
-
+  
       # --------------Step 1-------------------------------
       if not q.empty():
         message = q.get()
@@ -454,6 +470,8 @@ class CarlaBridge:
         sm.update(0)
 
         # TODO gas and brake is deprecated
+        sm_accl = sm['carControl'].actuators.accel
+        sm_steer = sm['carControl'].actuators.steeringAngleDeg
         throttle_op = clip(sm['carControl'].actuators.accel / 1.6, 0.0, 1.0)
         brake_op = clip(-sm['carControl'].actuators.accel / 4.0, 0.0, 1.0)
         steer_op = sm['carControl'].actuators.steeringAngleDeg
@@ -511,6 +529,13 @@ class CarlaBridge:
       vehicle_state.cruise_button = cruise_button
       vehicle_state.is_engaged = is_openpilot_engaged
 
+      writer.writerow([is_openpilot_engaged, 
+        sm_accl, sm_steer,
+        throttle_op, throttle_manual, old_throttle, throttle_out, throttle_ease_out_counter,
+        steer_op, steer_manual, old_steer, steer_out, steer_ease_out_counter,
+        brake_op, brake_manual, old_brake, brake_out, brake_ease_out_counter,
+        vc.throttle, vc.steer, vc.brake
+       ])
       if rk.frame % PRINT_DECIMATION == 0:
         print("frame: ", "engaged:", is_openpilot_engaged, "; throttle: ", round(vc.throttle, 3), "; steer(c/deg): ",
               round(vc.steer, 3), round(steer_out, 3), "; brake: ", round(vc.brake, 3))
@@ -562,4 +587,3 @@ if __name__ == "__main__":
     # Try cleaning up the wide camera param
     # in case users want to use replay after
     Params().remove("WideCameraOnly")
-

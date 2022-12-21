@@ -62,9 +62,9 @@ class VehicleState:
 
 """
 
-                  ┌──────────────┐
-                  │  OpenPilot   │
-                  └──────┬───────┘
+                  ┌──────────────────┐
+                  │ OpenPilot/Manual │
+                  └──────┬───────────┘
 (Throttle, Brake, Steer) │
                          │
                          │
@@ -96,6 +96,8 @@ A scalar value to control the vehicle brake [0.0, 1.0]. Default is 0.0.
 steer (float)
 A scalar value to control the vehicle steering [-1.0, 1.0]. Default is 0.0.
 
+https://github.com/commaai/cereal/blob/master/car.capnp#L334
+
 """
 
 class TrottleBrakeSteer:
@@ -104,7 +106,7 @@ class TrottleBrakeSteer:
       self.brake = brake
       self.steer = steer
     def __repr__(self):
-      return "[T:%.5f B:%.5f S:%.5f]" % (self.throttle, self.brake, self.steer)
+      return "[T:%.4f B:%.4f S:%.4f]" % (self.throttle, self.brake, self.steer)
     def __eq__(self, other):
         return (self.throttle, self.brake, self.steer) == (other.throttle, other.brake, other.steer)
 
@@ -135,11 +137,11 @@ def rate_limit(old, new, limit):
 def TBS_scale_clamp(tbs, scalingtype):
   if scalingtype == 'openpilot2carla':
     tbs.throttle = normalize(tbs.throttle, (0,1), (0,1) )
-    tbs.brake = normalize(tbs.brake * -1, (0,1), (0,0.25) ) # brake = -throttle, The only trick is that brake only if thottle was negative, ignore if throttle is possitive
+    tbs.brake = normalize(tbs.brake, (0,1), (0,0.25) )
     tbs.steer = normalize(tbs.steer, (-100, 100), (0.1, -0.1) )  # tbs.steer / (-1000) # normalize(tbs.steer, (-100, 100), (0.1, -0.1) )      <- Exceed OP steering limit
   else:  # manual2carla
     tbs.throttle = normalize(tbs.throttle, (0,1), (0,1) )
-    tbs.brake = 0 # normalize(tbs.brake, (0,1), (0,0.7) )
+    tbs.brake = normalize(tbs.brake, (0,1), (0,0.7) )
     tbs.steer = normalize(tbs.steer , (-1,1), (1,-1) )
   return tbs # no scaling
 
@@ -149,11 +151,15 @@ def TBS_rate_limit(old, new, mode):
     Blimit = 1
     Slimit = 0.0002
   else: # manual
-    if new.throttle ==0 : # FIX for manual loosing throttle whern you turn left/right
+    # Make mnual loosing loss throttle gradually
+    if new.throttle ==0 : 
       Tlimit = 0.001
     else :
       Tlimit = 1
-    Blimit = 1
+    if new.brake ==0 : 
+      Blimit = 0.1
+    else :
+      Blimit = 1
     Slimit = 1
   return TrottleBrakeSteer(throttle=rate_limit(old.throttle, new.throttle, Tlimit), brake=rate_limit(old.brake, new.brake, Blimit), steer=rate_limit(old.steer, new.steer, Slimit))
 
@@ -532,7 +538,7 @@ class CarlaBridge:
 
         # TODO gas and brake is deprecated
         op.throttle = sm['carControl'].actuators.accel
-        op.brake = sm['carControl'].actuators.accel
+        op.brake = sm['carControl'].actuators.accel * -1
         op.steer = sm['carControl'].actuators.steeringAngleDeg
         new = TBS_scale_clamp(op, 'openpilot2carla')
         out = TBS_rate_limit(old, new, 'openpilot')
@@ -542,12 +548,10 @@ class CarlaBridge:
         out = TBS_rate_limit(old, new, 'manual')
         old = out
 
-
-      print(">>old:" , old, "op:", op, "manual:", manual, "new:", new, "out", out)
+      print("prev:", old, "op:", op, "manual:", manual, "new:", new, "out", out)
 
       # --------------Step 2-------------------------------
       
-
       vc.throttle = out.throttle
       vc.brake = out.brake
       vc.steer = out.steer
