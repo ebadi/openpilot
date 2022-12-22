@@ -1,6 +1,6 @@
 import rospy
 from std_msgs.msg import Float32
-import sensor_config as sens_cfg
+from .  import sensor_config as sens_cfg
 class Power_Model():
     def __init__(self):
         self.data = {

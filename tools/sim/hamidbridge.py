@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+
+import time
+import rospy
+from gokart_controller import Gokart_Controller
+import os
+import cv2
+from queue import Queue
+from threading import Thread
+import string
+import random
+
 import argparse
 import math
 import os
@@ -30,7 +41,8 @@ pm = messaging.PubMaster(['roadCameraState', 'wideRoadCameraState', 'acceleromet
 sm = messaging.SubMaster(['carControl', 'controlsState'])
 
 def parse_args(add_args=None):
-  parser = argparse.ArgumentParser(description='Bridge between CARLA and openpilot.')
+  parser = argparse.ArgumentParser(description='Bridge between Environment and Openpilot.')
+  parser.add_argument('--environment', default='carla')
   parser.add_argument('--joystick', action='store_true')
   parser.add_argument('--high_quality', action='store_true')
   parser.add_argument('--dual_camera', action='store_true')
@@ -147,16 +159,15 @@ class Camerad:
     self.Hdiv4 = H // 4 if (H % 4 == 0) else (H + (4 - H % 4)) // 4
 
   def cam_callback_road(self, image):
-    self._cam_callback(image, self.frame_road_id, 'roadCameraState', VisionStreamType.VISION_STREAM_ROAD)
+    self._cam_callback(image.raw_data, self.frame_road_id, 'roadCameraState', VisionStreamType.VISION_STREAM_ROAD)
     self.frame_road_id += 1
 
   def cam_callback_wide_road(self, image):
-    self._cam_callback(image, self.frame_wide_id, 'wideRoadCameraState', VisionStreamType.VISION_STREAM_WIDE_ROAD)
+    self._cam_callback(image.raw_data, self.frame_wide_id, 'wideRoadCameraState', VisionStreamType.VISION_STREAM_WIDE_ROAD)
     self.frame_wide_id += 1
 
   def _cam_callback(self, image, frame_id, pub_type, yuv_type):
-    img = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
-    img = np.reshape(img, (H, W, 4))
+    img = np.reshape(image, (H, W, 4))
     img = img[:, :, [0, 1, 2]].copy()
 
     # convert RGB frame to YUV
@@ -178,6 +189,8 @@ class Camerad:
     }
     setattr(dat, pub_type, msg)
     pm.send(pub_type, dat)
+
+
 
 def imu_callback(imu, vehicle_state):
   # send 5x since 'sensor_tick' doesn't seem to work. limited by the world tick?
@@ -202,7 +215,7 @@ def imu_callback(imu, vehicle_state):
     time.sleep(0.01)
 
 
-def panda_state_function(vs: VehicleState, exit_event: threading.Event):
+def panda_state_function(vs: VehicleState, exit_event: threading.Event, environment='carla'):
   pm = messaging.PubMaster(['pandaStates'])
   while not exit_event.is_set():
     dat = messaging.new_message('pandaStates', 1)
@@ -217,7 +230,7 @@ def panda_state_function(vs: VehicleState, exit_event: threading.Event):
     time.sleep(0.5)
 
 
-def peripheral_state_function(exit_event: threading.Event):
+def peripheral_state_function(exit_event: threading.Event, environment='carla'):
   pm = messaging.PubMaster(['peripheralState'])
   while not exit_event.is_set():
     dat = messaging.new_message('peripheralState')
@@ -260,6 +273,7 @@ def gps_callback(gps, vehicle_state):
     "source": log.GpsLocationData.SensorSource.ublox,
   }
 
+
   pm.send('gpsLocationExternal', dat)
 
 
@@ -283,13 +297,34 @@ def fake_driver_monitoring(exit_event: threading.Event):
     time.sleep(DT_DMON)
 
 
-def can_function_runner(vs: VehicleState, exit_event: threading.Event):
+def can_function_runner(vs: VehicleState, exit_event: threading.Event, environment='carla'):
   i = 0
   while not exit_event.is_set():
     can_function(pm, vs.speed, vs.angle, i, vs.cruise_button, vs.is_engaged)
     time.sleep(0.01)
     i += 1
 
+# 0 -> laptop webcam
+# 2 -> laptop laser
+# test
+def webcam_function(camerad: Camerad, exit_event: threading.Event, environment='carla'):
+  rk = Ratekeeper(20)
+  # Load the video
+  myframeid = 0
+  cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
+  while not exit_event.is_set():
+    print("image recieved")
+    ret, frame = cap.read()
+    if not ret:
+      end_of_video = True
+      break
+    frame = cv2.resize(frame, (W, H))
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
+    #cv2.imwrite('webcam.jpg', frame)
+    camerad._cam_callback(frame, frame_id=myframeid, pub_type='roadCameraState', yuv_type=VisionStreamType.VISION_STREAM_ROAD)
+    camerad._cam_callback(frame, frame_id=myframeid, pub_type='wideRoadCameraState', yuv_type=VisionStreamType.VISION_STREAM_WIDE_ROAD)
+    myframeid = myframeid +1 
+    rk.keep_time()
 
 def connect_carla_client(host: str, port: int):
   client = carla.Client(host, port)
@@ -349,88 +384,119 @@ class CarlaBridge:
       self.close()
 
   def _run(self, q: Queue):
-    client = connect_carla_client(self._args.host, self._args.port)
-    world = client.load_world(self._args.town)
-
-    settings = world.get_settings()
-    settings.synchronous_mode = True  # Enables synchronous mode
-    settings.fixed_delta_seconds = 0.05
-    world.apply_settings(settings)
-
-    world.set_weather(carla.WeatherParameters.ClearSunset)
-
-    if not self._args.high_quality:
-      world.unload_map_layer(carla.MapLayer.Foliage)
-      world.unload_map_layer(carla.MapLayer.Buildings)
-      world.unload_map_layer(carla.MapLayer.ParkedVehicles)
-      world.unload_map_layer(carla.MapLayer.Props)
-      world.unload_map_layer(carla.MapLayer.StreetLights)
-      world.unload_map_layer(carla.MapLayer.Particles)
-
-    blueprint_library = world.get_blueprint_library()
-
-    world_map = world.get_map()
-
-    vehicle_bp = blueprint_library.filter('vehicle.tesla.*')[1]
-    vehicle_bp.set_attribute('role_name', 'hero')
-    spawn_points = world_map.get_spawn_points()
-    assert len(spawn_points) > self._args.num_selected_spawn_point, f'''No spawn point {self._args.num_selected_spawn_point}, try a value between 0 and
-      {len(spawn_points)} for this town.'''
-    spawn_point = spawn_points[self._args.num_selected_spawn_point]
-    vehicle = world.spawn_actor(vehicle_bp, spawn_point)
-    self._carla_objects.append(vehicle)
-    # max_steer_angle = vehicle.get_physics_control().wheels[0].max_steer_angle
-
-    # make tires less slippery
-    # wheel_control = carla.WheelPhysicsControl(tire_friction=5)
-    physics_control = vehicle.get_physics_control()
-    physics_control.mass = 2326
-    # physics_control.wheels = [wheel_control]*4
-    physics_control.torque_curve = [[20.0, 500.0], [5000.0, 500.0]]
-    physics_control.gear_switch_time = 0.0
-    vehicle.apply_physics_control(physics_control)
-
-    transform = carla.Transform(carla.Location(x=0.8, z=1.13))
-
-    def create_camera(fov, callback):
-      blueprint = blueprint_library.find('sensor.camera.rgb')
-      blueprint.set_attribute('image_size_x', str(W))
-      blueprint.set_attribute('image_size_y', str(H))
-      blueprint.set_attribute('fov', str(fov))
-      if not self._args.high_quality:
-        blueprint.set_attribute('enable_postprocess_effects', 'False')
-      camera = world.spawn_actor(blueprint, transform, attach_to=vehicle)
-      camera.listen(callback)
-      return camera
 
     self._camerad = Camerad()
-
-    if self._args.dual_camera:
-      road_camera = create_camera(fov=40, callback=self._camerad.cam_callback_road)
-      self._carla_objects.append(road_camera)
-
-    road_wide_camera = create_camera(fov=120, callback=self._camerad.cam_callback_wide_road)  # fov bigger than 120 shows unwanted artifacts
-    self._carla_objects.append(road_wide_camera)
-
     vehicle_state = VehicleState()
 
-    # re-enable IMU
-    imu_bp = blueprint_library.find('sensor.other.imu')
-    imu_bp.set_attribute('sensor_tick', '0.01')
-    imu = world.spawn_actor(imu_bp, transform, attach_to=vehicle)
-    imu.listen(lambda imu: imu_callback(imu, vehicle_state))
+    if (self._args.environment =='carla'):
+      print("ENV CARLA")
+      client = connect_carla_client(self._args.host, self._args.port)
+      world = client.load_world(self._args.town)
 
-    gps_bp = blueprint_library.find('sensor.other.gnss')
-    gps = world.spawn_actor(gps_bp, transform, attach_to=vehicle)
-    gps.listen(lambda gps: gps_callback(gps, vehicle_state))
-    self.params.put_bool("UbloxAvailable", True)
+      settings = world.get_settings()
+      settings.synchronous_mode = True  # Enables synchronous mode
+      settings.fixed_delta_seconds = 0.05
+      world.apply_settings(settings)
 
-    self._carla_objects.extend([imu, gps])
+      world.set_weather(carla.WeatherParameters.ClearSunset)
+
+      if not self._args.high_quality:
+        world.unload_map_layer(carla.MapLayer.Foliage)
+        world.unload_map_layer(carla.MapLayer.Buildings)
+        world.unload_map_layer(carla.MapLayer.ParkedVehicles)
+        world.unload_map_layer(carla.MapLayer.Props)
+        world.unload_map_layer(carla.MapLayer.StreetLights)
+        world.unload_map_layer(carla.MapLayer.Particles)
+
+      blueprint_library = world.get_blueprint_library()
+
+      world_map = world.get_map()
+
+      vehicle_bp = blueprint_library.filter('vehicle.tesla.*')[1]
+      vehicle_bp.set_attribute('role_name', 'hero')
+      spawn_points = world_map.get_spawn_points()
+      assert len(spawn_points) > self._args.num_selected_spawn_point, f'''No spawn point {self._args.num_selected_spawn_point}, try a value between 0 and
+        {len(spawn_points)} for this town.'''
+      spawn_point = spawn_points[self._args.num_selected_spawn_point]
+      vehicle = world.spawn_actor(vehicle_bp, spawn_point)
+      self._carla_objects.append(vehicle)
+      # max_steer_angle = vehicle.get_physics_control().wheels[0].max_steer_angle
+
+      # make tires less slippery
+      # wheel_control = carla.WheelPhysicsControl(tire_friction=5)
+      physics_control = vehicle.get_physics_control()
+      physics_control.mass = 2326
+      # physics_control.wheels = [wheel_control]*4
+      physics_control.torque_curve = [[20.0, 500.0], [5000.0, 500.0]]
+      physics_control.gear_switch_time = 0.0
+      vehicle.apply_physics_control(physics_control)
+
+      transform = carla.Transform(carla.Location(x=0.8, z=1.13))
+
+      def create_camera(fov, callback):
+        blueprint = blueprint_library.find('sensor.camera.rgb')
+        blueprint.set_attribute('image_size_x', str(W))
+        blueprint.set_attribute('image_size_y', str(H))
+        blueprint.set_attribute('fov', str(fov))
+        if not self._args.high_quality:
+          blueprint.set_attribute('enable_postprocess_effects', 'False')
+        camera = world.spawn_actor(blueprint, transform, attach_to=vehicle)
+        camera.listen(callback)
+        return camera
+
+    
+      ## TODO HAMID
+      road_camera = create_camera(fov=40, callback=self._camerad.cam_callback_road)
+
+      if self._args.dual_camera:
+        road_camera = create_camera(fov=40, callback=self._camerad.cam_callback_road)
+        self._carla_objects.append(road_camera)
+
+      road_wide_camera = create_camera(fov=120, callback=self._camerad.cam_callback_wide_road)  # fov bigger than 120 shows unwanted artifacts
+      self._carla_objects.append(road_wide_camera)
+      # re-enable IMU
+      imu_bp = blueprint_library.find('sensor.other.imu')
+      imu_bp.set_attribute('sensor_tick', '0.01')
+      imu = world.spawn_actor(imu_bp, transform, attach_to=vehicle)
+      imu.listen(lambda imu: imu_callback(imu, vehicle_state))
+
+      gps_bp = blueprint_library.find('sensor.other.gnss')
+      gps = world.spawn_actor(gps_bp, transform, attach_to=vehicle)
+      gps.listen(lambda gps: gps_callback(gps, vehicle_state))
+      self.params.put_bool("UbloxAvailable", True)
+
+      self._carla_objects.extend([imu, gps])
+    else:
+      print("TODO ENV WEBCAM")
+      ## TODO HAMID
+      id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+      print("ROS random id", id)
+      rospy.init_node('Gokart_Controller' + id, log_level=rospy.INFO )
+      rospy.core.set_node_uri("http://192.168.1.146:11311")
+      print("here", id)
+      gc = Gokart_Controller()
+      rate = rospy.Rate(10)
+      for i in range(0,10):
+        print(i)
+        gc.set_turn_rate(i)
+        rate.sleep()
+      time.sleep(1)
+      for i in range(10,0, -1):
+        print(i)
+        gc.set_turn_rate(i)
+        rate.sleep()
+      time.sleep(1)
+
+      self._threads.append(threading.Thread(target=webcam_function, args=(self._camerad, self._exit_event, self._args.environment,)))
+    
+    
+
+
     # launch fake car threads
-    self._threads.append(threading.Thread(target=panda_state_function, args=(vehicle_state, self._exit_event,)))
-    self._threads.append(threading.Thread(target=peripheral_state_function, args=(self._exit_event,)))
-    self._threads.append(threading.Thread(target=fake_driver_monitoring, args=(self._exit_event,)))
-    self._threads.append(threading.Thread(target=can_function_runner, args=(vehicle_state, self._exit_event,)))
+    self._threads.append(threading.Thread(target=panda_state_function,  args=(vehicle_state, self._exit_event, self._args.environment, )))
+    self._threads.append(threading.Thread(target=peripheral_state_function, args=(self._exit_event, self._args.environment,)))
+    self._threads.append(threading.Thread(target=fake_driver_monitoring, args=(self._exit_event, )))
+    self._threads.append(threading.Thread(target=can_function_runner, args=(vehicle_state, self._exit_event, self._args.environment,)))
     for t in self._threads:
       t.start()
 
@@ -447,9 +513,10 @@ class CarlaBridge:
     # keeping previous state for change rate limit
     old = TrottleBrakeSteer()
 
-    # Simulation tends to be slow in the initial steps. This prevents lagging later
-    for _ in range(20):
-      world.tick()
+    if (self._args.environment =='carla'):
+      # Simulation tends to be slow in the initial steps. This prevents lagging later
+      for _ in range(20):
+        world.tick()
 
     # loop
     rk = Ratekeeper(100, print_delay_threshold=0.05)
@@ -514,12 +581,18 @@ class CarlaBridge:
       vc.throttle = out.throttle
       vc.brake = out.brake
       vc.steer = out.steer
-
-      vehicle.apply_control(vc)
-
+      if (self._args.environment =='carla'):
+        vehicle.apply_control(vc)
+        vel = vehicle.get_velocity()
+        speed = math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)  # in m/s
+        if rk.frame % 5 == 0:
+          world.tick()
+      else :
+        vel = 2
+        speed = 2
       # --------------Step 3-------------------------------
-      vel = vehicle.get_velocity()
-      speed = math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)  # in m/s
+
+      
       vehicle_state.speed = speed
       vehicle_state.vel = vel
       vehicle_state.angle = out.steer
@@ -530,8 +603,6 @@ class CarlaBridge:
         print("frame: ", "engaged:", is_openpilot_engaged, "; throttle: ", round(vc.throttle, 3), "; steer(c/deg): ",
               round(vc.steer, 3), round(out.steer, 3), "; brake: ", round(vc.brake, 3))
 
-      if rk.frame % 5 == 0:
-        world.tick()
       rk.keep_time()
       self.started = True
 

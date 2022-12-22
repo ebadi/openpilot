@@ -1,6 +1,6 @@
 import rospy
 from sensor_msgs.msg import CameraInfo
-import sensor_config as sens_cfg
+from .  import sensor_config as sens_cfg
 class Camera_Model():
     def __init__(self):
         self.data = {

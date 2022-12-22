@@ -3,15 +3,15 @@ import sys
 import os
 import time
 import threading
-import sensor_config as sens_cfg
+from . import sensor_config as sens_cfg
 
-import body_electronics_model
-import camera_model
-import imu_model
-import lidar_model
-import power_model
-import propulsion_model
-import sonar_model
+from . import body_electronics_model
+from . import camera_model
+from . import imu_model
+from . import lidar_model
+from . import power_model
+from . import propulsion_model
+from . import sonar_model
 
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32
