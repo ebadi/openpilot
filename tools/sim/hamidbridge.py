@@ -105,6 +105,10 @@ def rate_limit(old, new, limit):
     result = new
   return result
 
+def error():
+  import traceback
+  print("WHAT!!".join(traceback.format_stack()))
+  exit()
 
 def TBS_scale_clamp(tbs, scalingtype):
   if scalingtype == 'openpilot2carla':
@@ -112,19 +116,25 @@ def TBS_scale_clamp(tbs, scalingtype):
     tbs.brake = normalize(tbs.brake, (0, 1), (0, 0.25))
     # tbs.steer / (-1000) # normalize(tbs.steer, (-100, 100), (0.1, -0.1) )      <- Exceed OP steering limit
     tbs.steer = normalize(tbs.steer, (-100, 100), (0.1, -0.1))
-  else:  # manual2carla
+  elif scalingtype == 'manual2carla': 
     tbs.throttle = normalize(tbs.throttle, (0, 1), (0, 1))
     tbs.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
     tbs.steer = normalize(tbs.steer, (-1, 1), (1, -1))
+  elif scalingtype == 'openpilot2gokart': 
+    tbs.throttle = normalize(tbs.throttle, (0, 1), (0, 10))
+    tbs.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
+    tbs.steer = normalize(tbs.steer, (-1, 1), (0, 10))
+  else:
+    error()
   return tbs  # no scaling
 
 
 def TBS_rate_limit(old, new, mode):
-  if mode == 'openpilot':
+  if mode == 'carla':
     Tlimit = 0.001
     Blimit = 1
     Slimit = 0.0002
-  else:  # manual
+  elif mode == 'manual':
     # Make manual losing throttle gradually
     if new.throttle == 0:
       Tlimit = 0.001
@@ -135,6 +145,12 @@ def TBS_rate_limit(old, new, mode):
     else:
       Blimit = 1
     Slimit = 1
+  elif mode == 'gokart':
+    Tlimit = 1
+    Blimit = 1
+    Slimit = 1
+  else:
+    error()
   return TrottleBrakeSteer(throttle=rate_limit(old.throttle, new.throttle, Tlimit), brake=rate_limit(old.brake, new.brake, Blimit), steer=rate_limit(old.steer, new.steer, Slimit))
 
 
@@ -310,12 +326,12 @@ def can_function_runner(vs: VehicleState, exit_event: threading.Event, environme
 # 2 -> laptop laser
 # test
 def webcam_function(camerad: Camerad, exit_event: threading.Event, environment='carla'):
-  rk = Ratekeeper(20)
+  rk = Ratekeeper(1000)
   # Load the video
   myframeid = 0
   cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
   while not exit_event.is_set():
-    print("image recieved")
+    # print("image recieved")
     ret, frame = cap.read()
     if not ret:
       end_of_video = True
@@ -391,7 +407,7 @@ class CarlaBridge:
     vehicle_state = VehicleState()
 
     if (self._args.environment =='carla'):
-      print("ENV CARLA")
+      print("===== [ Gokart environment ] =====")      
       client = connect_carla_client(self._args.host, self._args.port)
       world = client.load_world(self._args.town)
 
@@ -469,22 +485,19 @@ class CarlaBridge:
 
       self._carla_objects.extend([imu, gps])
     else:
-      print("TODO ENV WEBCAM")
-      ## TODO HAMID
+      print("===== [ Gokart environment ] =====")
       id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
-      print("ROS random id", id)
       rospy.init_node('Gokart_Controller' + id, log_level=rospy.INFO )
       rospy.core.set_node_uri("http://%s:11311" % self._args.rosip ) # local ip
-      print("here", id)
       gc = Gokart_Controller()
       rate = rospy.Rate(10)
       for i in range(0,10):
-        print(i)
+        print(i,end=" ")
         gc.set_turn_rate(i)
         rate.sleep()
       time.sleep(1)
       for i in range(10,0, -1):
-        print(i)
+        print(i,end=" ")
         gc.set_turn_rate(i)
         rate.sleep()
       time.sleep(1)
@@ -516,12 +529,15 @@ class CarlaBridge:
     old = TrottleBrakeSteer()
 
     if (self._args.environment =='carla'):
+      rk = Ratekeeper(100, print_delay_threshold=0.05)
       # Simulation tends to be slow in the initial steps. This prevents lagging later
       for _ in range(20):
         world.tick()
+    else:
+      rk = Ratekeeper(10000, print_delay_threshold=0.1)
 
     # loop
-    rk = Ratekeeper(100, print_delay_threshold=0.05)
+    
 
     while self._keep_alive:
       # 1. Read the throttle, steer and brake from op or manual controls
@@ -568,9 +584,17 @@ class CarlaBridge:
         op.throttle = sm['carControl'].actuators.accel
         op.brake = sm['carControl'].actuators.accel * -1
         op.steer = sm['carControl'].actuators.steeringAngleDeg
-        new = TBS_scale_clamp(op, 'openpilot2carla')
-        out = TBS_rate_limit(old, new, 'openpilot')
-        old = out
+        if (self._args.environment =='carla'):
+          new = TBS_scale_clamp(op, 'openpilot2carla')
+          out = TBS_rate_limit(old, new, 'carla')
+          old = out
+        elif (self._args.environment =='gokart'):
+          new = TBS_scale_clamp(op, 'openpilot2gokart')
+          out = TBS_rate_limit(old, new, 'gokart')
+          old = out
+        else:
+          error()
+
       else:
         new = TBS_scale_clamp(manual, 'manual2carla')
         out = TBS_rate_limit(old, new, 'manual')
@@ -592,6 +616,7 @@ class CarlaBridge:
       else :
         vel = 2
         speed = 2
+        gc.set_turn_rate(out.steer)
       # --------------Step 3-------------------------------
 
       
