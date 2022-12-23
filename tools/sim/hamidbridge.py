@@ -484,7 +484,7 @@ class CarlaBridge:
       self.params.put_bool("UbloxAvailable", True)
 
       self._carla_objects.extend([imu, gps])
-    else:
+    elif (self._args.environment =='gokart'):
       print("===== [ Gokart environment ] =====")
       id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
       rospy.init_node('Gokart_Controller' + id, log_level=rospy.INFO )
@@ -504,7 +504,8 @@ class CarlaBridge:
 
       self._threads.append(threading.Thread(target=webcam_function, args=(self._camerad, self._exit_event, self._args.environment,)))
     
-    
+    else:
+      error()
 
 
     # launch fake car threads
@@ -533,12 +534,14 @@ class CarlaBridge:
       # Simulation tends to be slow in the initial steps. This prevents lagging later
       for _ in range(20):
         world.tick()
+    elif (self._args.environment =='gokart'):
+      rk = Ratekeeper(100, print_delay_threshold=0.05)
     else:
-      rk = Ratekeeper(10000, print_delay_threshold=0.1)
+      error()
+
+
 
     # loop
-    
-
     while self._keep_alive:
       # 1. Read the throttle, steer and brake from op or manual controls
       # 2. Set instructions in Carla
@@ -577,6 +580,7 @@ class CarlaBridge:
         elif m[0] == "quit":
           break
 
+      print("not engaged in")
       if is_openpilot_engaged:
         sm.update(0)
 
@@ -584,6 +588,7 @@ class CarlaBridge:
         op.throttle = sm['carControl'].actuators.accel
         op.brake = sm['carControl'].actuators.accel * -1
         op.steer = sm['carControl'].actuators.steeringAngleDeg
+        print("engaged in", self._args.environment )
         if (self._args.environment =='carla'):
           new = TBS_scale_clamp(op, 'openpilot2carla')
           out = TBS_rate_limit(old, new, 'carla')
@@ -607,16 +612,20 @@ class CarlaBridge:
       vc.throttle = out.throttle
       vc.brake = out.brake
       vc.steer = out.steer
-      if (self._args.environment =='carla'):
+      if self._args.environment =='carla':
         vehicle.apply_control(vc)
         vel = vehicle.get_velocity()
         speed = math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)  # in m/s
         if rk.frame % 5 == 0:
           world.tick()
-      else :
+      elif self._args.environment =='gokart':
         vel = 2
         speed = 2
         gc.set_turn_rate(out.steer)
+        print("out", out)
+        # TODO: Implement brake and speed
+      else:
+        error()
       # --------------Step 3-------------------------------
 
       
