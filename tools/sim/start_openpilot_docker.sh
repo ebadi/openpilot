@@ -1,5 +1,10 @@
 #!/bin/bash
 
+ROS_IP=$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | grep 192.168)
+ROS_MASTER_URI='http://192.168.1.200:11311'
+echo "Openpilot IP address: $ROS_IP \n Gokart IP address: $ROS_MASTER_URI"
+BRIDGEENV='gokart'  # options: carla,gokart
+
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 cd $DIR
 
@@ -17,8 +22,10 @@ else
 
   # docker pull ghcr.io/commaai/openpilot-sim:latest
   CMD="./tmux_script.sh $*"
-  EXTRA_ARGS="${EXTRA_ARGS} -it"
+  EXTRA_ARGS="${EXTRA_ARGS} -it -e ROS_MASTER_URI=$ROS_MASTER_URI -e ROS_IP=$ROS_IP -e BRIDGEENV=$BRIDGEENV"
 fi
+
+
 
 docker kill openpilot_client || true
 docker run --net=host\

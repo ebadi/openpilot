@@ -23,6 +23,7 @@ import carla  # pylint: disable=import-error
 import numpy as np
 import pyopencl as cl
 import pyopencl.array as cl_array
+import os
 
 import cereal.messaging as messaging
 from cereal import log
@@ -43,6 +44,7 @@ sm = messaging.SubMaster(['carControl', 'controlsState'])
 def parse_args(add_args=None):
   parser = argparse.ArgumentParser(description='Bridge between Environment and Openpilot.')
   parser.add_argument('--environment', default='carla')
+  parser.add_argument('--rosip', default='')
   parser.add_argument('--joystick', action='store_true')
   parser.add_argument('--high_quality', action='store_true')
   parser.add_argument('--dual_camera', action='store_true')
@@ -472,7 +474,7 @@ class CarlaBridge:
       id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
       print("ROS random id", id)
       rospy.init_node('Gokart_Controller' + id, log_level=rospy.INFO )
-      rospy.core.set_node_uri("http://192.168.1.146:11311")
+      rospy.core.set_node_uri("http://%s:11311" % self._args.rosip ) # local ip
       print("here", id)
       gc = Gokart_Controller()
       rate = rospy.Rate(10)
