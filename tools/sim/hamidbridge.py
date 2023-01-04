@@ -3,7 +3,6 @@
 import time
 import rospy
 from gokart_controller import Gokart_Controller
-import os
 import cv2
 from queue import Queue
 from threading import Thread
@@ -326,7 +325,7 @@ def can_function_runner(vs: VehicleState, exit_event: threading.Event, environme
 # 2 -> laptop laser
 # test
 def webcam_function(camerad: Camerad, exit_event: threading.Event, environment='carla'):
-  rk = Ratekeeper(1000)
+  rk = Ratekeeper(10)
   # Load the video
   myframeid = 0
   cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
@@ -519,7 +518,7 @@ class CarlaBridge:
 
     vc = carla.VehicleControl(throttle=0, steer=0, brake=0, reverse=False)
 
-    is_openpilot_engaged = False
+    is_openpilot_engaged = True
 
     # input
     op= TrottleBrakeSteer()
@@ -580,7 +579,6 @@ class CarlaBridge:
         elif m[0] == "quit":
           break
 
-      print("not engaged in")
       if is_openpilot_engaged:
         sm.update(0)
 
@@ -588,7 +586,6 @@ class CarlaBridge:
         op.throttle = sm['carControl'].actuators.accel
         op.brake = sm['carControl'].actuators.accel * -1
         op.steer = sm['carControl'].actuators.steeringAngleDeg
-        print("engaged in", self._args.environment )
         if (self._args.environment =='carla'):
           new = TBS_scale_clamp(op, 'openpilot2carla')
           out = TBS_rate_limit(old, new, 'carla')
@@ -622,7 +619,7 @@ class CarlaBridge:
         vel = 2
         speed = 2
         gc.set_turn_rate(out.steer)
-        print("out", out)
+        # print("out", out)
         # TODO: Implement brake and speed
       else:
         error()
