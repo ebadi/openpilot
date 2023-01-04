@@ -490,6 +490,8 @@ class CarlaBridge:
       rospy.core.set_node_uri("http://%s:11311" % self._args.rosip ) # local ip
       gc = Gokart_Controller()
       rate = rospy.Rate(10)
+
+      """
       for i in range(0,10):
         print(i,end=" ")
         gc.set_turn_rate(i)
@@ -500,7 +502,7 @@ class CarlaBridge:
         gc.set_turn_rate(i)
         rate.sleep()
       time.sleep(1)
-
+      """
       self._threads.append(threading.Thread(target=webcam_function, args=(self._camerad, self._exit_event, self._args.environment,)))
     
     else:
