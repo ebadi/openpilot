@@ -120,16 +120,16 @@ def TBS_scale_clamp(tbs, scalingtype):
     tmp.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
     tmp.steer = normalize(tbs.steer, (-1, 1), (1, -1))
   elif scalingtype == 'manual2gokart': 
-    tmp.throttle = normalize(tbs.throttle, (0, 1), (0, 1))
+    tmp.throttle = normalize(tbs.throttle, (0, 1), (0, 10))
     tmp.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
-    tmp.steer = normalize(tbs.steer, (-1, 1), (1, -1))
+    tmp.steer = normalize(tbs.steer, (-0.15, 0.15), (0, 10))
   elif scalingtype == 'openpilot2gokart': 
     tmp.throttle = normalize(tbs.throttle, (0, 1), (0, 10))
     tmp.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
     tmp.steer = normalize(tbs.steer, (-1, 1), (0, 10))
   else:
     error()
-  return tmp  # no scaling
+  return tmp 
 
 
 def TBS_rate_limit(old, new, mode):
@@ -143,11 +143,17 @@ def TBS_rate_limit(old, new, mode):
       Tlimit = 0.001
     else:
       Tlimit = 1
+
     if new.brake == 0:
       Blimit = 0.1
     else:
       Blimit = 1
-    Slimit = 1
+
+    if new.steer == 5.0:
+      Slimit = 0.1
+    else:
+      Slimit = 1
+
   elif mode == 'gokart':
     Tlimit = 1
     Blimit = 1
