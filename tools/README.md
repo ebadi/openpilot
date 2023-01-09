@@ -63,3 +63,7 @@ Learn about the openpilot ecosystem and tools by playing our [CTF](/tools/CTF.md
 ├── ssh/                # SSH into a comma device
 └── webcam/             # Run openpilot on a PC with webcams
 ```
+
+```
+/openpilot/selfdrive/ui/watch3
+```

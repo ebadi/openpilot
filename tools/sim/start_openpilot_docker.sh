@@ -3,7 +3,7 @@
 ROS_IP=$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | grep 192.168)
 ROS_MASTER_URI='http://192.168.1.200:11311'
 echo "Openpilot IP address: $ROS_IP \n Gokart IP address: $ROS_MASTER_URI"
-BRIDGEENV='gokart'  # options: carla,gokart
+BRIDGEENV='carla'  # options: carla,gokart
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 cd $DIR
@@ -38,6 +38,7 @@ docker run --net=host\
   -v "$DIR/":/openpilot/tools/sim/ \
   -v "$DIR/hamiddata/":/root/.comma/media/0/realdata/ \
   --device /dev/video0  --device /dev/video1  \
+  --device /dev/video2  --device /dev/video3  \
   --shm-size 1G \
   -e DISPLAY=$DISPLAY \
   -e QT_X11_NO_MITSHM=1 \

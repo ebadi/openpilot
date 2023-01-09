@@ -110,22 +110,26 @@ def error():
   exit()
 
 def TBS_scale_clamp(tbs, scalingtype):
+  tmp= TrottleBrakeSteer()
   if scalingtype == 'openpilot2carla':
-    tbs.throttle = normalize(tbs.throttle, (0, 1), (0, 1))
-    tbs.brake = normalize(tbs.brake, (0, 1), (0, 0.25))
-    # tbs.steer / (-1000) # normalize(tbs.steer, (-100, 100), (0.1, -0.1) )      <- Exceed OP steering limit
-    tbs.steer = normalize(tbs.steer, (-100, 100), (0.1, -0.1))
+    tmp.throttle = normalize(tbs.throttle, (0, 1), (0, 1))
+    tmp.brake = normalize(tbs.brake, (0, 1), (0, 0.25))
+    tmp.steer = normalize(tbs.steer, (-100, 100), (0.1, -0.1)) # tbs.steer / (-1000) # normalize(tbs.steer, (-100, 100), (0.1, -0.1) )      <- Exceed OP steering limit
   elif scalingtype == 'manual2carla': 
-    tbs.throttle = normalize(tbs.throttle, (0, 1), (0, 1))
-    tbs.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
-    tbs.steer = normalize(tbs.steer, (-1, 1), (1, -1))
+    tmp.throttle = normalize(tbs.throttle, (0, 1), (0, 1))
+    tmp.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
+    tmp.steer = normalize(tbs.steer, (-1, 1), (1, -1))
+  elif scalingtype == 'manual2gokart': 
+    tmp.throttle = normalize(tbs.throttle, (0, 1), (0, 1))
+    tmp.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
+    tmp.steer = normalize(tbs.steer, (-1, 1), (1, -1))
   elif scalingtype == 'openpilot2gokart': 
-    tbs.throttle = normalize(tbs.throttle, (0, 1), (0, 10))
-    tbs.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
-    tbs.steer = normalize(tbs.steer, (-1, 1), (0, 10))
+    tmp.throttle = normalize(tbs.throttle, (0, 1), (0, 10))
+    tmp.brake = normalize(tbs.brake, (0, 1), (0, 0.7))
+    tmp.steer = normalize(tbs.steer, (-1, 1), (0, 10))
   else:
     error()
-  return tbs  # no scaling
+  return tmp  # no scaling
 
 
 def TBS_rate_limit(old, new, mode):
@@ -324,11 +328,15 @@ def can_function_runner(vs: VehicleState, exit_event: threading.Event, environme
 # 0 -> laptop webcam
 # 2 -> laptop laser
 # test
-def webcam_function(camerad: Camerad, exit_event: threading.Event, environment='carla'):
+def webcam_function(camerad: Camerad, exit_event: threading.Event, environment='carla', cam_type='road'):
   rk = Ratekeeper(10)
   # Load the video
   myframeid = 0
-  cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
+  if cam_type == 'road':
+    cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
+  else:
+    cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
+
   while not exit_event.is_set():
     # print("image recieved")
     ret, frame = cap.read()
@@ -337,9 +345,12 @@ def webcam_function(camerad: Camerad, exit_event: threading.Event, environment='
       break
     frame = cv2.resize(frame, (W, H))
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
-    #cv2.imwrite('webcam.jpg', frame)
-    camerad._cam_callback(frame, frame_id=myframeid, pub_type='roadCameraState', yuv_type=VisionStreamType.VISION_STREAM_ROAD)
-    camerad._cam_callback(frame, frame_id=myframeid, pub_type='wideRoadCameraState', yuv_type=VisionStreamType.VISION_STREAM_WIDE_ROAD)
+    #cv2.imwrite(cam_type + '.jpg', frame)
+    if cam_type == 'road':
+      camerad._cam_callback(frame, frame_id=myframeid, pub_type='roadCameraState', yuv_type=VisionStreamType.VISION_STREAM_ROAD)
+    else:
+      camerad._cam_callback(frame, frame_id=myframeid, pub_type='wideRoadCameraState', yuv_type=VisionStreamType.VISION_STREAM_WIDE_ROAD)
+    
     myframeid = myframeid +1 
     rk.keep_time()
 
@@ -503,7 +514,8 @@ class CarlaBridge:
         rate.sleep()
       time.sleep(1)
       """
-      self._threads.append(threading.Thread(target=webcam_function, args=(self._camerad, self._exit_event, self._args.environment,)))
+      self._threads.append(threading.Thread(target=webcam_function, args=(self._camerad, self._exit_event, self._args.environment, 'road' )))
+      self._threads.append(threading.Thread(target=webcam_function, args=(self._camerad, self._exit_event, self._args.environment, 'wide' )))
     
     else:
       error()
@@ -599,12 +611,17 @@ class CarlaBridge:
         else:
           error()
 
-      else:
-        new = TBS_scale_clamp(manual, 'manual2carla')
-        out = TBS_rate_limit(old, new, 'manual')
-        old = out
+      else: # Not engaged
+        if (self._args.environment =='carla'):
+          new = TBS_scale_clamp(manual, 'manual2carla')
+          out = TBS_rate_limit(old, new, 'manual')
+          old = out
+        elif (self._args.environment =='gokart'):
+          new = TBS_scale_clamp(manual, 'manual2gokart')
+          out = TBS_rate_limit(old, new, 'manual')
+          old = out
 
-      # print("prev:", old, "op:", op, "manual:", manual, "new:", new, "out", out)
+      print("env", self._args.environment, " prev:", old, "op:", op, "manual:", manual, "new:", new, "out", out)
 
       # --------------Step 2-------------------------------
       
