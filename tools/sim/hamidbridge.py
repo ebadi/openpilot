@@ -338,7 +338,7 @@ def webcam_function(camerad: Camerad, exit_event: threading.Event, environment='
   rk = Ratekeeper(10)
   # Load the video
   myframeid = 0
-  if cam_type == 'road':
+  if cam_type == 'road': # These two video stream should be different, otherwise global /io/opencv/modules/videoio/src/cap_v4l.cpp (902) open VIDEOIO(V4L2:/dev/video0): can't open camera by index
     cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
   else:
     cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
@@ -627,7 +627,7 @@ class CarlaBridge:
           out = TBS_rate_limit(old, new, 'manual')
           old = out
 
-      print("env", self._args.environment, " prev:", old, "op:", op, "manual:", manual, "new:", new, "out", out)
+      # print("env", self._args.environment, " prev:", old, "op:", op, "manual:", manual, "new:", new, "out", out)
 
       # --------------Step 2-------------------------------
       
