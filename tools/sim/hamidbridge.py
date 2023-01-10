@@ -140,19 +140,20 @@ def TBS_rate_limit(old, new, mode):
   elif mode == 'manual':
     # Make manual losing throttle gradually
     if new.throttle == 0:
-      Tlimit = 0.001
+      Tlimit = 0
     else:
-      Tlimit = 1
+      Tlimit = 0.1
 
-    if new.brake == 0:
-      Blimit = 0.1
+    if new.brake != 0:
+      Tlimit = 1 # faster brake
+      Blimit = 0
     else:
-      Blimit = 1
+      Blimit = 0.1
 
     if new.steer == 5.0:
-      Slimit = 0.1
+      Slimit = 0
     else:
-      Slimit = 1
+      Slimit = 0.5
 
   elif mode == 'gokart':
     Tlimit = 1
@@ -341,7 +342,7 @@ def webcam_function(camerad: Camerad, exit_event: threading.Event, environment='
   if cam_type == 'road': # These two video stream should be different, otherwise global /io/opencv/modules/videoio/src/cap_v4l.cpp (902) open VIDEOIO(V4L2:/dev/video0): can't open camera by index
     cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
   else:
-    cap = cv2.VideoCapture(0) #set camera ID here, index X in /dev/videoX
+    cap = cv2.VideoCapture(2) #set camera ID here, index X in /dev/videoX
 
   while not exit_event.is_set():
     # print("image recieved")
@@ -605,7 +606,7 @@ class CarlaBridge:
 
         # TODO gas and brake is deprecated
         op.throttle = sm['carControl'].actuators.accel
-        op.brake = sm['carControl'].actuators.brake
+        op.brake = sm['carControl'].actuators.accel * -1
         op.steer = sm['carControl'].actuators.steeringAngleDeg
 
         if (self._args.environment =='carla'):
@@ -629,7 +630,7 @@ class CarlaBridge:
           out = TBS_rate_limit(old, new, 'manual')
           old = out
 
-      # print("env", self._args.environment, " prev:", old, "op:", op, "manual:", manual, "new:", new, "out", out)
+      print("env", self._args.environment, " prev:", old, "op:", op, "manual:", manual, "new:", new, "out", out)
 
       # --------------Step 2-------------------------------
       
@@ -646,6 +647,7 @@ class CarlaBridge:
         vel = 2
         speed = 2
         gc.set_turn_rate(out.steer)
+        gc.set_speed(out.throttle)
         # print("out", out)
         # TODO: Implement brake and speed
       else:
