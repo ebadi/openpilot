@@ -378,7 +378,7 @@ class CarlaBridge:
     msg.liveCalibration.rpyCalib = [0.0, 0.0, 0.0]
     self.params.put("CalibrationParams", msg.to_bytes())
     self.params.put_bool("WideCameraOnly", not arguments.dual_camera)
-    self.params.put_bool("ExperimentalMode", True)
+    # self.params.put_bool("ExperimentalMode", True) 
 
     self._args = arguments
     self._carla_objects = []
@@ -605,8 +605,9 @@ class CarlaBridge:
 
         # TODO gas and brake is deprecated
         op.throttle = sm['carControl'].actuators.accel
-        op.brake = sm['carControl'].actuators.accel * -1
+        op.brake = sm['carControl'].actuators.brake
         op.steer = sm['carControl'].actuators.steeringAngleDeg
+
         if (self._args.environment =='carla'):
           new = TBS_scale_clamp(op, 'openpilot2carla')
           out = TBS_rate_limit(old, new, 'carla')
@@ -659,8 +660,7 @@ class CarlaBridge:
       vehicle_state.is_engaged = is_openpilot_engaged
 
       if rk.frame % PRINT_DECIMATION == 0:
-        print("frame: ", "engaged:", is_openpilot_engaged, "; throttle: ", round(vc.throttle, 3), "; steer(c/deg): ",
-              round(vc.steer, 3), round(out.steer, 3), "; brake: ", round(vc.brake, 3))
+        print("frame:", "engaged:", is_openpilot_engaged, "; throttle:", round(vc.throttle, 3), "; steer:", round(vc.steer, 3), "; brake:", round(vc.brake, 3))
 
       rk.keep_time()
       self.started = True

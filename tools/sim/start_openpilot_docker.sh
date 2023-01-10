@@ -37,6 +37,7 @@ docker run --net=host\
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v "$DIR/":/openpilot/tools/sim/ \
   -v "$DIR/hamiddata/":/root/.comma/media/0/realdata/ \
+  -v "$DIR/../../common/realtime.py":/openpilot/common/realtime.py \
   --device /dev/video0  --device /dev/video1  \
   --device /dev/video2  --device /dev/video3  \
   --shm-size 1G \
