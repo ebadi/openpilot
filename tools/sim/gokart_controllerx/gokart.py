@@ -271,7 +271,7 @@ def webcam(camerad: Camerad, exit_event: threading.Event):
   rk = Ratekeeper(20)
   # Load the video
   myframeid = 0
-  cap = cv2.VideoCapture(4) #set camera ID here, index X in /dev/videoX
+  cap = cv2.VideoCapture(2) #set camera ID here, index X in /dev/videoX
   while not exit_event.is_set():
     print("image recieved")
     ret, frame = cap.read()

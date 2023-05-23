@@ -4,5 +4,5 @@ class Gokart_Controller():
     	print("speed", speed)
 
     def set_turn_rate(self, degrees):
-    	print("trun", degree)
+    	print("trun", degrees)
 
