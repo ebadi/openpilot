@@ -1,9 +1,60 @@
 FROM ghcr.io/commaai/openpilot-base-cl:latest
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      tmux \
-      vim \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends\
+    apt-utils \
+    unzip \
+    tar \
+    curl \
+    xz-utils \
+    alien \
+    dbus \
+    gcc-arm-none-eabi \
+    tmux \
+    vim \
+    lsb-core \
+    libx11-6 \
+    nano \
+    tea \
+    wget \
+  && rm -rf /var/lib/apt/lists/*
+
+# RUN git clone https://github.com/zeromq/libzmq.git /libzmq && \
+#    cd /libzmq  && ./autogen.sh && \
+#    ./configure && make && make install
+
+# Intel OpenCL driver
+ARG INTEL_DRIVER=l_opencl_p_18.1.0.015.tgz
+ARG INTEL_DRIVER_URL=http://registrationcenter-download.intel.com/akdlm/irc_nas/vcp/15532
+RUN mkdir -p /tmp/opencl-driver-intel
+WORKDIR /tmp/opencl-driver-intel
+RUN echo INTEL_DRIVER is $INTEL_DRIVER && \
+    wget $INTEL_DRIVER_URL/$INTEL_DRIVER && \
+    tar -xzf $INTEL_DRIVER && \
+    for i in $(basename $INTEL_DRIVER .tgz)/rpm/*.rpm; do alien --to-deb $i; done && \
+    dpkg -i *.deb && \
+    rm -rf $INTEL_DRIVER $(basename $INTEL_DRIVER .tgz) *.deb && \
+    mkdir -p /etc/OpenCL/vendors && \
+    echo /opt/intel/opencl_compilers_and_libraries_18.1.0.015/linux/compiler/lib/intel64_lin/libintelocl.so > /etc/OpenCL/vendors/intel.icd && \
+    rm -rf /tmp/opencl-driver-intel
+
+ENV NVIDIA_VISIBLE_DEVICES all
+ENV NVIDIA_DRIVER_CAPABILITIES graphics,utility,compute
+ENV QTWEBENGINE_DISABLE_SANDBOX 1
+
+RUN dbus-uuidgen > /etc/machine-id
+
+# Install CARLA python api
+# RUN pip install --upgrade pip && \
+#    pip install --no-cache-dir carla==0.9.12
+
+RUN pip install numpy \
+    pillow \
+    tk \
+    h5py \
+    gym \
+    opencv-python
+# RUN pip install tensorflow-gpu
+RUN pip install tensorflow
 
 # get same tmux config used on NEOS for debugging
 RUN cd $HOME && \
@@ -12,9 +63,68 @@ RUN cd $HOME && \
 ENV PYTHONPATH $HOME/openpilot:${PYTHONPATH}
 RUN mkdir -p $HOME/openpilot
 
-COPY SConstruct $HOME/openpilot/
+
+
+
+
+
+ARG ROS_PKG=ros_base
+ENV ROS_DISTRO=noetic
+ENV ROS_ROOT=/opt/ros/${ROS_DISTRO}
+ENV ROS_PYTHON_VERSION=3
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /workspace
+
+# add the ROS deb repo to the apt sources list
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+          git \
+		cmake \
+		build-essential \
+		curl \
+		wget \
+		gnupg2 \
+		lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+    
+
+RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
+RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
+# RUN apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+
+RUN apt-get update
+RUN apt-get install -y  ros-${ROS_DISTRO}-desktop-full
+RUN apt-get install -y  ros-noetic-ros-comm
+
+
+# install bootstrap dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+          libpython3-dev \
+          python3-rosdep \
+          python3-rosinstall-generator \
+          python3-vcstool \
+          build-essential && \
+    rosdep init && \
+    rosdep update
+
+
+RUN apt-get install -y --no-install-recommends  iputils-ping  net-tools
+RUN pip3 install pyros rospkg
+RUN echo "\nsource ${ROS_ROOT}/setup.bash\n" >> /root/.bashrc
+
+WORKDIR /
+RUN git clone https://github.com/zeromq/libzmq.git /libzmq
+RUN cd /libzmq ; ./autogen.sh ; ./configure ; make ; make install ; ldconfig
+WORKDIR /
+
 
 COPY ./body $HOME/openpilot/body
+COPY SConstruct $HOME/openpilot/
+
+
+
 COPY ./third_party $HOME/openpilot/third_party
 COPY ./site_scons $HOME/openpilot/site_scons
 COPY ./rednose $HOME/openpilot/rednose
@@ -27,7 +137,11 @@ COPY ./selfdrive $HOME/openpilot/selfdrive
 COPY ./system $HOME/openpilot/system
 COPY ./tools $HOME/openpilot/tools
 
+
+# RUN sed -i 's/\/tmp\/tools\/openpilot_env\.sh/\/openpilot\/tools\/openpilot_env\.sh/g' ~/.bashrc
+# RUN echo "\nln -s -f /usr/local/lib/libzmq.so.5.2.5  /lib/x86_64-linux-gnu/libzmq.so.5" >> ~/.bashrc
+
 WORKDIR $HOME/openpilot
-RUN scons --cache-readonly -j12
+RUN scons -j$(nproc)
 
 RUN python -c "from selfdrive.test.helpers import set_params_enabled; set_params_enabled()"
