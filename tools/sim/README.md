@@ -58,3 +58,13 @@ All inputs:
 
 The following resources contain more details and troubleshooting tips.
 * [CARLA on the openpilot wiki](https://github.com/commaai/openpilot/wiki/CARLA)
+
+
+## Instruction
+```
+git clone URL --recusrsive openpilot
+git checkout nextgen
+cd /tools/sim
+./build_container.sh
+./start_openpilot_docker.sh
+```
